@@ -158,39 +158,58 @@ app.get("/callback", async (c) => {
 
   if (errResponse) return errResponse;
 
-  // Fetch the user info from Mellow
-  const userResponse = await fetch(`${c.env.MELLOW_BASE_URL}/userinfo`, {
-    headers: {
-      Authorization: `Bearer ${tokens.accessToken}`,
-    },
-  });
-  if (!userResponse.ok) {
-    return c.text("Failed to fetch user info with JWT " + tokens.accessToken, 500);
-  }
-  const { sub, name, email } = (await userResponse.json()) as { sub: string; name: string; email: string };
+  // Fetch identity + role from Mellow's /api/profile.
+  //
+  // Replaces the previous /userinfo path which is a customer-only Mellow
+  // endpoint and returns non-2xx for freelancer accounts. /api/profile is
+  // role-aware and returns the same shape (ProfileWithSettings) for both
+  // customer and freelancer (only the values differ — `type` is the
+  // discriminator). uuid here equals the Cognito JWT `sub` claim.
+  //
+  // 5s timeout closes review feedback I-2 (slice 1 had no timeout on this
+  // probe, so a hung Mellow API would stall the OAuth interactive flow).
+  type MellowProfile = {
+    uuid?: string;
+    id?: number;
+    email?: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    name?: string;
+    type?: string;
+  };
 
-  // Probe Mellow API to determine account role. JWT does not carry the
-  // customer/freelancer distinction — we have to ask the API. On any
-  // failure, default to 'customer' to preserve existing behavior.
-  let userRole: "customer" | "freelancer" = "customer";
+  let profile: MellowProfile;
   try {
     const profileResponse = await fetch(`${c.env.MELLOW_API_BASE_URL}/profile`, {
       headers: {
         Authorization: `Bearer ${tokens.accessToken}`,
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(5000),
     });
-    if (profileResponse.ok) {
-      const profile = (await profileResponse.json()) as { type?: string };
-      if (profile.type === "freelancer" || profile.type === "customer") {
-        userRole = profile.type;
-      }
-    } else {
-      console.warn(`/api/profile probe returned ${profileResponse.status}; defaulting role to 'customer'`);
+    if (!profileResponse.ok) {
+      const body = await profileResponse.text().catch(() => "");
+      return c.text(`Failed to fetch /api/profile (${profileResponse.status}): ${body}`, 500);
     }
+    profile = (await profileResponse.json()) as MellowProfile;
   } catch (err) {
-    console.warn(`/api/profile probe failed; defaulting role to 'customer':`, err);
+    return c.text(`Failed to fetch /api/profile: ${String(err)}`, 500);
   }
+
+  if (!profile.uuid) {
+    return c.text("Mellow /api/profile returned no uuid; cannot complete OAuth", 500);
+  }
+
+  const sub = profile.uuid;
+  const email = profile.email ?? "";
+  // `name` is a backend-computed getter that may return strings with trailing
+  // whitespace ("Petrova Anna "). Trim, fallback to firstName + lastName.
+  const name = profile.name?.trim() || [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim() || "Mellow User";
+  // `type` enum: "customer" | "freelancer" | "administrator" | "".
+  // Anything other than "freelancer" defaults to "customer" — administrator
+  // and unknown are not expected to use this MCP, but customer flow is the
+  // safer default if they do (existing behavior, no extra surface).
+  const userRole: "customer" | "freelancer" = profile.type === "freelancer" ? "freelancer" : "customer";
 
   // Return back to the MCP client a new token
   const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
