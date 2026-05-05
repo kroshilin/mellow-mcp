@@ -111,9 +111,9 @@ Concretely, the file should end up like:
 {
   "compilerOptions": {
     // ... existing options ...
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"]
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"],
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "worker-configuration.d.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "worker-configuration.d.ts"],
 }
 ```
 
@@ -217,11 +217,7 @@ git commit -m "chore(test): add MSW server and global setup hooks"
 
 ```ts
 import { describe, it, expect } from "vitest";
-import {
-  currencyToId,
-  idToCurrency,
-  mapCurrencyIdToCode,
-} from "../../src/tools/f2b/shared";
+import { currencyToId, idToCurrency, mapCurrencyIdToCode } from "../../src/tools/f2b/shared";
 
 describe("F2B currency mapping", () => {
   it("currencyToId maps EUR to 3 and USD to 2", () => {
@@ -280,8 +276,8 @@ In `package.json` `"scripts"` block:
     "cf-typegen": "wrangler types",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
-  }
+    "test:watch": "vitest",
+  },
 }
 ```
 
@@ -329,14 +325,7 @@ describe("F2B Zod schemas", () => {
   });
 
   it("client status enum covers exactly 6 values", () => {
-    const valid = [
-      "not_verified",
-      "verification_in_progress",
-      "verification_failed",
-      "active",
-      "archived",
-      "suspended",
-    ];
+    const valid = ["not_verified", "verification_in_progress", "verification_failed", "active", "archived", "suspended"];
     for (const v of valid) {
       expect(f2bClientStatusEnum.safeParse(v).success).toBe(true);
     }
@@ -344,18 +333,7 @@ describe("F2B Zod schemas", () => {
   });
 
   it("measure enum covers exactly 10 values", () => {
-    const valid = [
-      "item",
-      "hour",
-      "day",
-      "week",
-      "month",
-      "kg",
-      "ton",
-      "liter",
-      "cubic_meter",
-      "km",
-    ];
+    const valid = ["item", "hour", "day", "week", "month", "kg", "ton", "liter", "cubic_meter", "km"];
     for (const v of valid) {
       expect(f2bMeasureEnum.safeParse(v).success).toBe(true);
     }
@@ -424,9 +402,7 @@ describe("MellowClient error trace-id propagation", () => {
       }),
     );
     const client = createMellowClient("https://my.mellow.io/api", "fake-token");
-    await expect(client.get("/customer/test")).rejects.toThrow(
-      /\[trace=trace-abc-123\]/,
-    );
+    await expect(client.get("/customer/test")).rejects.toThrow(/\[trace=trace-abc-123\]/);
   });
 
   it("falls back to [cf-ray=...] when only cf-ray is present", async () => {
@@ -439,9 +415,7 @@ describe("MellowClient error trace-id propagation", () => {
       }),
     );
     const client = createMellowClient("https://my.mellow.io/api", "fake-token");
-    await expect(client.get("/customer/test")).rejects.toThrow(
-      /\[cf-ray=789abc-DME\]/,
-    );
+    await expect(client.get("/customer/test")).rejects.toThrow(/\[cf-ray=789abc-DME\]/);
   });
 
   it("omits trace suffix when neither header is present", async () => {
@@ -451,9 +425,7 @@ describe("MellowClient error trace-id propagation", () => {
       }),
     );
     const client = createMellowClient("https://my.mellow.io/api", "fake-token");
-    await expect(client.get("/customer/test")).rejects.toThrow(
-      /failed \(422\): plain error$/,
-    );
+    await expect(client.get("/customer/test")).rejects.toThrow(/failed \(422\): plain error$/);
   });
 });
 ```

@@ -4,11 +4,11 @@
 
 ## Status (updated 2026-05-06)
 
-| Slice | Tasks | Status | PR |
-|---|---|---|---|
-| **Slice 1** | Tasks 1, 2, 3, 4, 5 + mini Task 13 | **merged** | [#7](https://github.com/kroshilin/mellow-mcp/pull/7) (commit `219e4f9`) |
-| **Slice 2** (next) | Tasks 6, 7, 8, 9, 10, 11, 12 + remainder of Task 13 + Task 14, 15, 16 | not started | — |
-| **Test setup** (parallel sub-track) | Vitest + `@cloudflare/vitest-pool-workers` + MSW | planned | see `docs/plans/2026-05-06-vitest-setup.md` |
+| Slice                               | Tasks                                                                 | Status      | PR                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------- |
+| **Slice 1**                         | Tasks 1, 2, 3, 4, 5 + mini Task 13                                    | **merged**  | [#7](https://github.com/kroshilin/mellow-mcp/pull/7) (commit `219e4f9`) |
+| **Slice 2** (next)                  | Tasks 6, 7, 8, 9, 10, 11, 12 + remainder of Task 13 + Task 14, 15, 16 | not started | —                                                                       |
+| **Test setup** (parallel sub-track) | Vitest + `@cloudflare/vitest-pool-workers` + MSW                      | planned     | see `docs/plans/2026-05-06-vitest-setup.md`                             |
 
 Slice 1 in production: foundation (`userRole` probe, conditional tool registration, trace-id in errors) + `f2b_createClient` + `f2b_listClients`. Code review verdict: approve, 0 Critical, 3 Important (rolled to slice 2):
 
