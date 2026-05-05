@@ -2,20 +2,34 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Status (updated 2026-05-06)
+
+| Slice | Tasks | Status | PR |
+|---|---|---|---|
+| **Slice 1** | Tasks 1, 2, 3, 4, 5 + mini Task 13 | **merged** | [#7](https://github.com/kroshilin/mellow-mcp/pull/7) (commit `219e4f9`) |
+| **Slice 2** (next) | Tasks 6, 7, 8, 9, 10, 11, 12 + remainder of Task 13 + Task 14, 15, 16 | not started | — |
+| **Test setup** (parallel sub-track) | Vitest + `@cloudflare/vitest-pool-workers` + MSW | planned | see `docs/plans/2026-05-06-vitest-setup.md` |
+
+Slice 1 in production: foundation (`userRole` probe, conditional tool registration, trace-id in errors) + `f2b_createClient` + `f2b_listClients`. Code review verdict: approve, 0 Critical, 3 Important (rolled to slice 2):
+
+- I-1: `tokenExchangeCallback` doesn't re-probe role on refresh — TODO note.
+- I-2: profile probe has no timeout — apply `signal: AbortSignal.timeout(5000)` in slice 2.
+- I-3: `mapCurrencyIdToCode` overwrite semantics — guard in slice 2.
+
 **Goal:** Add 9 F2B (freelancer-to-business) MCP tools that let an authenticated freelancer manage F2B clients (create/list/update/archive) and invoices (createDraft → sendDraft, get/list/cancel) end-to-end, with composite client+invoice creation and a mandatory show-before-send invariant.
 
 **Architecture:**
 
-- One probe `GET /api/profile` in `MellowHandler` callback determines `userRole: 'customer' | 'freelancer'`, persisted in `Props`.
-- `MyMCP.init()` registers tools conditionally — customer tools for `customer`, F2B tools (this PR) for `freelancer`.
-- New `src/tools/f2b/` module: `clients.ts` (4 tools), `invoices.ts` (5 tools), `shared.ts` (currency mapping, enums, helpers).
-- `MellowClient` improved to surface `X-Trace-Id` / `cf-ray` in error messages — affects all tools, not only F2B.
-- New MCP resource `mellow://freelancer-guide` (source `docs/FREELANCER_GUIDE.md`).
-- `AGENT_PRIMER` gets an opening-behavior section so the agent asks role at session start.
+- One probe `GET /api/profile` in `MellowHandler` callback determines `userRole: 'customer' | 'freelancer'`, persisted in `Props`. ✅ shipped in slice 1.
+- `MyMCP.init()` registers tools conditionally — customer tools for `customer`, F2B tools (this PR) for `freelancer`. ✅ shipped in slice 1.
+- New `src/tools/f2b/` module: `clients.ts` (4 tools), `invoices.ts` (5 tools), `shared.ts` (currency mapping, enums, helpers). 🟡 shared.ts + 2 of 9 tools shipped in slice 1; 7 tools left for slice 2.
+- `MellowClient` improved to surface `X-Trace-Id` / `cf-ray` in error messages — affects all tools, not only F2B. ✅ shipped in slice 1.
+- New MCP resource `mellow://freelancer-guide` (source `docs/FREELANCER_GUIDE.md`). 🟡 slice 2.
+- `AGENT_PRIMER` gets an opening-behavior section so the agent asks role at session start. 🟡 slice 2.
 
 **Tech Stack:** TypeScript, Cloudflare Workers, MCP SDK (`@modelcontextprotocol/sdk`), Zod, Hono, OAuth Provider for Workers.
 
-**Verification:** Project has no test framework. Each task is verified via `npm run type-check` (mandatory) plus optional manual smoke-test in MCP Inspector (`npm run dev` → `http://localhost:8788/sse`).
+**Verification:** Once `2026-05-06-vitest-setup.md` lands (planned before slice 2), each task is verified via `npm run test` (Vitest unit + MSW integration) + `npm run type-check` (mandatory) + optional manual smoke-test in MCP Inspector. Until vitest setup lands, type-check + manual smoke-test only.
 
 **Spec:** `/Users/vladimir/Dev/Mellow/product-department/04_products/mcp/mellow-mcp-f2b-freelancer-invoices-design.md`
 
