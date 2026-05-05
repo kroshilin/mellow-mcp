@@ -15,6 +15,21 @@ export function asStructuredList(result: unknown): { [key: string]: unknown } {
   return { items: result };
 }
 
+/**
+ * Normalize a Mellow API response into an MCP `structuredContent` object
+ * for non-list endpoints. MCP `structuredContent` must be an object — but
+ * Mellow mutating endpoints sometimes return a plain string ("ok"), an
+ * empty array (`[]`), or `null` (no body). We wrap these into a stable
+ * `{ ok: true, raw: <value> }` envelope so the MCP client schema validator
+ * accepts them. Existing object shapes pass through unchanged.
+ */
+export function asStructuredObject(result: unknown): { [key: string]: unknown } {
+  if (typeof result === "object" && result !== null && !Array.isArray(result)) {
+    return result as { [key: string]: unknown };
+  }
+  return { ok: true, raw: result };
+}
+
 export function createMellowClient(baseUrl: string, accessToken: string, activeCompanyId?: number) {
   async function request<T>(
     method: string,
@@ -58,7 +73,10 @@ export function createMellowClient(baseUrl: string, accessToken: string, activeC
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Mellow API ${method} ${path} failed (${response.status}): ${text}`);
+      const traceId = response.headers.get("x-trace-id");
+      const cfRay = response.headers.get("cf-ray");
+      const traceSuffix = traceId ? ` [trace=${traceId}]` : cfRay ? ` [cf-ray=${cfRay}]` : "";
+      throw new Error(`Mellow API ${method} ${path} failed (${response.status})${traceSuffix}: ${text}`);
     }
 
     const contentType = response.headers.get("content-type") ?? "";

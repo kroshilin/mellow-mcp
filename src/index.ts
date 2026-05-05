@@ -27,6 +27,7 @@ import { registerScoutLookupTools } from "./tools/scout/lookup";
 import { registerScoutPoolTools } from "./tools/scout/pool";
 import { registerScoutPositionTools } from "./tools/scout/positions";
 import { registerScoutPromoPostTools } from "./tools/scout/promo-posts";
+import { registerF2bClientTools } from "./tools/f2b/clients";
 import { refreshUpstreamToken, type Props } from "./utils";
 
 export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
@@ -45,35 +46,45 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
 
   async init() {
     try {
+      const userRole = this.props?.userRole ?? "customer";
       const client = createMellowClient(this.env.MELLOW_API_BASE_URL, this.props!.accessToken, this.props!.activeCompanyId);
 
-      registerTaskTools(this.server, client);
-      registerTaskGroupTools(this.server, client);
-      registerFreelancerTools(this.server, client);
-      registerFinanceTools(this.server, client);
-      registerCompanyTools(this.server, client);
-      registerDocumentTools(this.server, client);
-      registerReferenceTools(this.server, client);
-      registerWebhookTools(this.server, client);
-      registerProfileTools(this.server, client);
-      registerChatGptTools(this.server, client);
+      if (userRole === "customer") {
+        registerTaskTools(this.server, client);
+        registerTaskGroupTools(this.server, client);
+        registerFreelancerTools(this.server, client);
+        registerFinanceTools(this.server, client);
+        registerCompanyTools(this.server, client);
+        registerDocumentTools(this.server, client);
+        registerReferenceTools(this.server, client);
+        registerWebhookTools(this.server, client);
+        registerProfileTools(this.server, client);
+        registerChatGptTools(this.server, client);
 
-      registerReferenceFallbackTool(this.server, {
-        domain: DOMAIN_MD,
-        workflows: WORKFLOWS_MD,
-        antiPatterns: ANTI_PATTERNS_MD,
-      });
+        registerReferenceFallbackTool(this.server, {
+          domain: DOMAIN_MD,
+          workflows: WORKFLOWS_MD,
+          antiPatterns: ANTI_PATTERNS_MD,
+        });
 
-      const scoutClient = createMellowClient(this.env.SCOUT_API_BASE_URL, this.props!.accessToken, this.props!.activeCompanyId);
+        const scoutClient = createMellowClient(this.env.SCOUT_API_BASE_URL, this.props!.accessToken, this.props!.activeCompanyId);
 
-      registerScoutPositionTools(this.server, scoutClient);
-      registerScoutApplicationTools(this.server, scoutClient);
-      registerScoutAiTaskTools(this.server, scoutClient);
-      registerScoutPromoPostTools(this.server, scoutClient);
-      registerScoutPoolTools(this.server, scoutClient);
-      registerScoutAttachmentTools(this.server, scoutClient);
-      registerScoutCompanyTools(this.server, scoutClient);
-      registerScoutLookupTools(this.server, scoutClient);
+        registerScoutPositionTools(this.server, scoutClient);
+        registerScoutApplicationTools(this.server, scoutClient);
+        registerScoutAiTaskTools(this.server, scoutClient);
+        registerScoutPromoPostTools(this.server, scoutClient);
+        registerScoutPoolTools(this.server, scoutClient);
+        registerScoutAttachmentTools(this.server, scoutClient);
+        registerScoutCompanyTools(this.server, scoutClient);
+        registerScoutLookupTools(this.server, scoutClient);
+      }
+
+      if (userRole === "freelancer") {
+        // F2B (freelancer-to-business invoicing). First slice: client management.
+        // Invoice tools and other freelancer-side surface land in subsequent PRs.
+        registerF2bClientTools(this.server, client);
+        registerProfileTools(this.server, client);
+      }
 
       // MCP resources — full reference docs the agent can read on demand.
       // Pointers to these are in AGENT_PRIMER (returned via `instructions`).

@@ -148,4 +148,12 @@ export type Props = {
    * Per-tool `companyId` parameters override this on individual calls.
    */
   activeCompanyId?: number;
+  /**
+   * Mellow account role determined by one-time probe to GET /api/profile during
+   * OAuth callback. JWT does not carry this distinction (Cognito-claims do not
+   * map to customer/freelancer). `customer` (default) → existing CoR/Scout tool
+   * surface. `freelancer` → F2B + future freelancer-side tools. Defaults to
+   * 'customer' if probe fails (preserves current behavior).
+   */
+  userRole?: "customer" | "freelancer";
 };
