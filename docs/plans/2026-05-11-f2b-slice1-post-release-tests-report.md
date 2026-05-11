@@ -12,23 +12,23 @@
 
 ## Summary
 
-| Group | Title | Result |
-|---|---|---|
-| 1.1 | Customer sees full pre-release surface | ⏭ skipped — no customer session |
-| 1.2 | Customer listTasks | ⏭ skipped |
-| 2.1 | Freelancer sees ONLY F2B + profile | ⚠ pass with deviation (plan was inaccurate) |
-| 2.2 | Probe fallback to customer | ⏭ skipped — needs backend to 5xx |
-| 3.1 | Happy path: minimal legal client EUR | ✓ pass |
-| 3.2 | Full field set | ✓ pass |
-| 3.3 | Zod validation | ✓ pass (3/3) |
-| 3.4 | Currency immutable | ✓ pass (no updateClient tool) |
-| 4.1 | List without filter | ⚠ pass with bug (currency shape) |
-| 4.2 | Single status filter | ✓ pass |
-| 4.3 | Multi-value status (OR semantics) | ✓ pass |
-| 4.4 | Pagination | ✗ fail — `limit` param ignored by backend |
-| 5.1 | Backend error contains a trace | ✓ pass |
-| 5.2 | Backend can find log by trace | ⏭ skipped — needs backend team |
-| 6.1 | Invoice negative test | ✓ pass (no `f2b_createInvoiceDraft` exists) |
+| Group | Title                                  | Result                                      |
+| ----- | -------------------------------------- | ------------------------------------------- |
+| 1.1   | Customer sees full pre-release surface | ⏭ skipped — no customer session            |
+| 1.2   | Customer listTasks                     | ⏭ skipped                                  |
+| 2.1   | Freelancer sees ONLY F2B + profile     | ⚠ pass with deviation (plan was inaccurate) |
+| 2.2   | Probe fallback to customer             | ⏭ skipped — needs backend to 5xx           |
+| 3.1   | Happy path: minimal legal client EUR   | ✓ pass                                      |
+| 3.2   | Full field set                         | ✓ pass                                      |
+| 3.3   | Zod validation                         | ✓ pass (3/3)                                |
+| 3.4   | Currency immutable                     | ✓ pass (no updateClient tool)               |
+| 4.1   | List without filter                    | ⚠ pass with bug (currency shape)            |
+| 4.2   | Single status filter                   | ✓ pass                                      |
+| 4.3   | Multi-value status (OR semantics)      | ✓ pass                                      |
+| 4.4   | Pagination                             | ✗ fail — `limit` param ignored by backend   |
+| 5.1   | Backend error contains a trace         | ✓ pass                                      |
+| 5.2   | Backend can find log by trace          | ⏭ skipped — needs backend team             |
+| 6.1   | Invoice negative test                  | ✓ pass (no `f2b_createInvoiceDraft` exists) |
 
 **Bugs found:** 2 (one HIGH, one MEDIUM). Detail in [Bugs](#bugs).
 **Deviations from plan:** 1 (group 2.1 — surface differs from plan expectation; code is the source of truth).
@@ -66,7 +66,7 @@ Needs backend to return 5xx on `/api/profile`. Slated for slice 2 (Important iss
 Call:
 
 ```json
-{"email": "test+slice1@example.com", "country": "CY", "currency": "EUR"}
+{ "email": "test+slice1@example.com", "country": "CY", "currency": "EUR" }
 ```
 
 Response: `id=6643`, `uuid=32f6686b-894f-424c-99e6-44275011b465`, `status="not_verified"`, `type="legal"`, `country="CY"`, `createdAt="2026-05-11 12:19:21"`.
@@ -79,9 +79,15 @@ Call:
 
 ```json
 {
-  "email": "billing@acme.test", "country": "CY", "currency": "EUR",
-  "companyName": "Acme Ltd", "regNumber": "CY12345678", "vat": "CY99887766",
-  "address": "Limassol 123", "city": "Limassol", "postalCode": "3000"
+  "email": "billing@acme.test",
+  "country": "CY",
+  "currency": "EUR",
+  "companyName": "Acme Ltd",
+  "regNumber": "CY12345678",
+  "vat": "CY99887766",
+  "address": "Limassol 123",
+  "city": "Limassol",
+  "postalCode": "3000"
 }
 ```
 
@@ -91,11 +97,11 @@ Response: `id=6644`, all fields round-trip. `address` is returned as object `{ad
 
 All three invalid-input cases blocked MCP-side before reaching the backend:
 
-| input | result |
-|---|---|
-| `currency: "RUB"` | `Invalid option: expected one of "EUR"\|"USD"` |
+| input                   | result                                                |
+| ----------------------- | ----------------------------------------------------- |
+| `currency: "RUB"`       | `Invalid option: expected one of "EUR"\|"USD"`        |
 | `email: "not-an-email"` | `Invalid email address` (custom regex + format=email) |
-| `country: "XYZ"` | `expected string to have <=2 characters` |
+| `country: "XYZ"`        | `expected string to have <=2 characters`              |
 
 ### 3.4 Currency immutable ✓
 
@@ -169,6 +175,7 @@ No `f2b_createInvoiceDraft` (or similar invoice tool) exists in slice 1. The fre
 **Root cause:** `mapCurrencyIdToCode` only rewrites keys named `currencyId` (number). The backend returns a `currency` object `{currency: string, id: number}` — no `currencyId` key exists in the F2B response, so the mapper is a no-op.
 
 **Tool description claim** (`src/tools/f2b/clients.ts:49`):
+
 > Returns clients with currency mapped to ISO code (EUR/USD).
 
 This is not what's happening. The agent receives `{currency: "EUR", id: 3}` and has to dig one level deeper.
@@ -204,11 +211,11 @@ If neither: the param needs to be removed from the Zod schema entirely so we don
 
 ## Skipped — with reason
 
-| Group | Why skipped | How to unblock |
-|---|---|---|
-| 1.1, 1.2 | Single freelancer OAuth session in this run | Re-run with a customer account |
-| 2.2 | Backend has to return 5xx on `/api/profile` | Coordinate with backend or wait for slice 2 timeout |
-| 5.2 | Trace `9fa1224dbcdc8b21-CDG` needs human lookup in Sentry/Kibana | Hand trace to backend team |
+| Group    | Why skipped                                                      | How to unblock                                      |
+| -------- | ---------------------------------------------------------------- | --------------------------------------------------- |
+| 1.1, 1.2 | Single freelancer OAuth session in this run                      | Re-run with a customer account                      |
+| 2.2      | Backend has to return 5xx on `/api/profile`                      | Coordinate with backend or wait for slice 2 timeout |
+| 5.2      | Trace `9fa1224dbcdc8b21-CDG` needs human lookup in Sentry/Kibana | Hand trace to backend team                          |
 
 ---
 
@@ -216,11 +223,11 @@ If neither: the param needs to be removed from the Zod schema entirely so we don
 
 Three clients created on this run, all `status=not_verified` in account 884198:
 
-| id | uuid | email | companyName |
-|---|---|---|---|
+| id   | uuid                                 | email                      | companyName               |
+| ---- | ------------------------------------ | -------------------------- | ------------------------- |
 | 6640 | b3bed487-686b-4575-a768-519ff4b5033b | mcp-smoke-test@example.com | MCP Smoke Test 2026-05-11 |
-| 6643 | 32f6686b-894f-424c-99e6-44275011b465 | test+slice1@example.com | (none) |
-| 6644 | aa6aedd4-486a-451a-a7e1-8cf6d36a2661 | billing@acme.test | Acme Ltd |
+| 6643 | 32f6686b-894f-424c-99e6-44275011b465 | test+slice1@example.com    | (none)                    |
+| 6644 | aa6aedd4-486a-451a-a7e1-8cf6d36a2661 | billing@acme.test          | Acme Ltd                  |
 
 There is no `f2b_archiveClient` tool in slice 1 — these will need to be archived via the Mellow UI cabinet or backend (or carried into slice 2 once an archive tool ships).
 
@@ -288,10 +295,10 @@ Trace: `9fa151c3496db7cb-FRA` (cf-ray shape, served as `x-trace-id`). Hand to ba
 
 All three blocking checks pass:
 
-| | result |
-|---|---|
-| 1.1 surface (no regression, no F2B leak) | ✓ |
-| 1.2 listTasks (probe didn't break customer flow) | ✓ |
-| 2.1 trace-id (observability intact) | ✓ |
+|                                                  | result |
+| ------------------------------------------------ | ------ |
+| 1.1 surface (no regression, no F2B leak)         | ✓      |
+| 1.2 listTasks (probe didn't break customer flow) | ✓      |
+| 2.1 trace-id (observability intact)              | ✓      |
 
 Combined with the freelancer-side run earlier, slice 1 is **shippable**. Two non-blocker bugs ([Bug 1](#bug-1-currency-mapping-doesnt-flatten-to-iso-string), [Bug 2](#bug-2-limit-query-parameter-ignored-by-backend)) should be fixed before slice 2 (invoices) lands, since invoice payloads will compound both issues.
