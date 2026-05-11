@@ -182,3 +182,7 @@ dist
 
 # Planning docs — kept locally, lives in product-department workspace
 docs/plans/
+
+# Vitest
+node_modules/.vitest/
+coverage/
