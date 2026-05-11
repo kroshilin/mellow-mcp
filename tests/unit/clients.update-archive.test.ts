@@ -88,33 +88,29 @@ describe("f2b_updateClient", () => {
     });
   });
 
-  it("does NOT accept currency in the input schema (immutable by design)", async () => {
+  it("never forwards currency or type to the body, even if Zod is bypassed", async () => {
     const capture: Capture = {};
     const { server, invoke } = makeServerStub();
     registerF2bClientTools(server, makeClientStub(capture) as never);
 
-    // Pass currency as an extra key — stub server.tool() doesn't run Zod here,
-    // but the handler shape would never forward `currency` to the body because
-    // the loop only spreads keys we explicitly declared. This asserts the
-    // contract from the handler side.
+    // Zod strips unknown keys at the MCP boundary in production. Stub server
+    // here does NOT run Zod — we leak both immutable keys to verify the
+    // handler's whitelist also drops them (defense in depth).
     await invoke("f2b_updateClient", {
       clientId: 7,
       companyName: "Acme",
-      // currency would be rejected by Zod in production. Here we verify the
-      // handler ignores it if somehow passed.
       currency: "USD" as never,
+      type: "individual" as never,
     });
 
     const body = capture.body as Record<string, unknown>;
-    expect(body).toHaveProperty("clientId", 7);
-    expect(body).toHaveProperty("companyName", "Acme");
-    // The handler iterates declared params; `currency` is declared as an input
-    // and would be passed if present. The real safety net is Zod at the MCP
-    // boundary rejecting `currency`. This test documents intent — see
-    // tool description "Currency and type are immutable".
-    // We assert this in the production safety net via Zod schema in a follow-up
-    // refinement; for now, locking the path and clientId is the primary goal.
+    // Mutable fields make it through.
     expect(body.clientId).toBe(7);
+    expect(body.companyName).toBe("Acme");
+    // Immutable fields must NOT make it through, Zod or no Zod.
+    expect(body).not.toHaveProperty("currency");
+    expect(body).not.toHaveProperty("currencyId");
+    expect(body).not.toHaveProperty("type");
   });
 });
 

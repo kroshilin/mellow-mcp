@@ -95,14 +95,14 @@ export function registerF2bClientTools(server: McpServer, client: MellowClient) 
     },
     { title: "Update F2B client" },
     async (params) => {
-      // Forward only defined fields. The backend treats omitted fields as "no
-      // change", so passing `undefined` keys would be wasted bandwidth at best
-      // and a normalization risk at worst.
+      // Whitelist of mutable fields. currency/type are immutable on the backend
+      // by design — never forward them, even if Zod somewhere lets an unknown
+      // key through. Omitted fields = "no change" on backend.
+      const mutable = ["email", "country", "companyName", "regNumber", "vat", "tin", "address", "city", "region", "postalCode"] as const;
       const body: Record<string, unknown> = { clientId: params.clientId };
-      for (const [key, value] of Object.entries(params)) {
-        if (key !== "clientId" && value !== undefined) {
-          body[key] = value;
-        }
+      for (const key of mutable) {
+        const value = params[key];
+        if (value !== undefined) body[key] = value;
       }
       const result = await client.put<unknown>("/freelancer/f2b/clients/legal", body);
       const mapped = mapCurrencyIdToCode(result);
