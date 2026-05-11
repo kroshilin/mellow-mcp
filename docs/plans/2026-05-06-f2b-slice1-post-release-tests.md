@@ -1,8 +1,10 @@
 # Post-release test cases — F2B slice 1 (PR #7)
 
+**Status (updated 2026-05-11):** freelancer-side run executed, see [test report](./2026-05-11-f2b-slice1-post-release-tests-report.md). Customer backward-compat run also executed — verdict: slice 1 release confirmed, no regressions. 2 bugs found in freelancer run (Bug 1 currency mapping, Bug 2 `limit` query param) — Bug 1 fixed in the same followup PR; Bug 2 deferred to slice 2 (must be fixed before invoice listings ship).
+
 **What shipped:** `userRole` probe, conditional tool registration, trace-id in MellowClient errors, two F2B tools — `f2b_createClient` and `f2b_listClients`.
 
-**Where to test:** production MCP `https://mcp.mellow.io/mcp` (or dev/stage if available). Connect via Claude Desktop / Code / Inspector — any MCP client.
+**Where to test:** production MCP `https://mcp.it-dep-271.workers.dev/sse` (custom domain `mcp.mellow.io` not yet wired). Connect via Claude Desktop / Code / Inspector — any MCP client.
 
 **Two accounts needed:** one customer (any working one), one freelancer (request a test one from backend, or use an existing freelancer Mellow account).
 
@@ -43,13 +45,13 @@
 1. Connect under a freelancer account (fresh OAuth session so the `/api/profile` probe runs on a fresh token).
 2. List tools.
 
-**Expected (exact list):**
+**Expected (exact list — verified 2026-05-11 in production run):**
 
 - `f2b_createClient`
 - `f2b_listClients`
 - `getUserProfile`
-- `changeLanguage`
-- (any other tools registered by `registerProfileTools` — may include 1–2 more profile tools)
+
+That's it. `registerProfileTools` registers only `getUserProfile`; there is no `changeLanguage` (earlier draft of this plan listed it but it does not exist in the codebase).
 
 **MUST NOT be visible:** `listTasks`, `createTask`, `inviteFreelancer`, any `scout_*`, `listCompanies`, `getCompanyBalance`.
 

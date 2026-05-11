@@ -2,19 +2,34 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-## Status (updated 2026-05-06)
+## Status (updated 2026-05-11)
 
 | Slice                               | Tasks                                                                 | Status      | PR                                                                      |
 | ----------------------------------- | --------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------- |
-| **Slice 1**                         | Tasks 1, 2, 3, 4, 5 + mini Task 13                                    | **merged**  | [#7](https://github.com/kroshilin/mellow-mcp/pull/7) (commit `219e4f9`) |
+| **Slice 1**                         | Tasks 1, 2, 3, 4, 5 + mini Task 13                                    | **merged + verified** | [#7](https://github.com/kroshilin/mellow-mcp/pull/7) (commit `219e4f9`) |
+| **Slice 1 followup**                | Bug 1 currency flatten + doc tweaks + plan refinements                | in this PR  | this branch                                                             |
 | **Slice 2** (next)                  | Tasks 6, 7, 8, 9, 10, 11, 12 + remainder of Task 13 + Task 14, 15, 16 | not started | —                                                                       |
 | **Test setup** (parallel sub-track) | Vitest + `@cloudflare/vitest-pool-workers` + MSW                      | planned     | see `docs/plans/2026-05-06-vitest-setup.md`                             |
 
-Slice 1 in production: foundation (`userRole` probe, conditional tool registration, trace-id in errors) + `f2b_createClient` + `f2b_listClients`. Code review verdict: approve, 0 Critical, 3 Important (rolled to slice 2):
+### Slice 1 verified (2026-05-11)
+
+Production smoke run executed against deployed MCP `https://mcp.it-dep-271.workers.dev/sse`. See:
+
+- [Test plan](./2026-05-06-f2b-slice1-post-release-tests.md)
+- [Test report](./2026-05-11-f2b-slice1-post-release-tests-report.md)
+
+Verdict from test agent: **release confirmed, no regressions**. Customer flow unaffected, freelancer flow works end-to-end through `f2b_createClient` and `f2b_listClients`.
+
+Two bugs found in the freelancer run:
+
+- **Bug 1 (MEDIUM): currency mapping** — backend returns `currency: {currency: "EUR", id: 3}`, agents got the nested object instead of a flat ISO string. **Fixed in this followup PR** (`src/tools/f2b/shared.ts`).
+- **Bug 2 (MEDIUM now / HIGH for slice 2): `limit` query param ignored** — backend uses `size` (per `tasks.ts`/`freelancers.ts`/`documents.ts` convention), `f2b_listClients` was sending `limit`. **Deferred** — must be fixed in slice 2 before invoice listings ship, otherwise pagination breaks under real load.
+
+Code review of slice 1 also surfaced 3 Important issues, rolled to slice 2:
 
 - I-1: `tokenExchangeCallback` doesn't re-probe role on refresh — TODO note.
 - I-2: profile probe has no timeout — apply `signal: AbortSignal.timeout(5000)` in slice 2.
-- I-3: `mapCurrencyIdToCode` overwrite semantics — guard in slice 2.
+- I-3: `mapCurrencyIdToCode` overwrite semantics — guard in slice 2 (related to Bug 1 above; Bug 1 fix in this PR adds a new branch but doesn't add the broader overwrite guard yet).
 
 **Goal:** Add 9 F2B (freelancer-to-business) MCP tools that let an authenticated freelancer manage F2B clients (create/list/update/archive) and invoices (createDraft → sendDraft, get/list/cancel) end-to-end, with composite client+invoice creation and a mandatory show-before-send invariant.
 
