@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { asStructuredList, asStructuredObject, type MellowClient } from "../../mellow-client";
-import { f2bCommissionPayerEnum, f2bInvoiceStatusEnum, f2bLineItemSchema, idToCurrency, mapCurrencyIdToCode } from "./shared";
+import { f2bCommissionPayerEnum, f2bInvoiceStatusEnum, f2bLineItemSchema, mapCurrencyIdToCode } from "./shared";
 
 /**
  * Read the backend's currencyId from a client response, handling both shapes
@@ -84,16 +84,14 @@ export function registerF2bInvoiceTools(server: McpServer, client: MellowClient)
         acquiringEnabled: params.acquiringEnabled ?? false,
       };
       const created = await client.post<unknown>("/freelancer/f2b/v2/invoices", body);
+      // mapCurrencyIdToCode handles both backend shapes (flat currencyId
+      // and nested {currency, id}). No extra annotation needed — adding
+      // one was clobbering the nested object and putting the whole
+      // response into `currency` on unknown ids (review feedback PR #13).
       const mapped = mapCurrencyIdToCode(created);
-      // Annotate the response with the human-readable currency code so the
-      // agent doesn't have to re-derive it from the (potentially nested) shape.
-      const enriched =
-        mapped && typeof mapped === "object" && !Array.isArray(mapped)
-          ? { ...(mapped as Record<string, unknown>), currency: idToCurrency(currencyId) ?? mapped }
-          : mapped;
       return {
-        structuredContent: asStructuredObject(enriched),
-        content: [{ text: JSON.stringify(enriched, null, 2), type: "text" as const }],
+        structuredContent: asStructuredObject(mapped),
+        content: [{ text: JSON.stringify(mapped, null, 2), type: "text" as const }],
       };
     },
   );
@@ -117,7 +115,7 @@ export function registerF2bInvoiceTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "f2b_getInvoice",
-    "Get one F2B invoice with full details. If the invoice has acquiringEnabled=true and status is 'sent' or 'payment_queued', additionally fetches the public /payment-status endpoint to surface the acquiring transaction state ('notInitiated' | 'initiated' | 'completed' | 'failed') under `paymentStatus`. For bank-transfer-only invoices, `paymentStatus` is omitted — rely on `invoice.status`.",
+    "Get one F2B invoice with full details. If the invoice has acquiringEnabled=true and status is 'sent' or 'payment_queued', additionally fetches the public /payment-status endpoint to surface the acquiring transaction state ('notInitiated' | 'initiated' | 'completed' | 'failed') under `paymentStatus`. For bank-transfer-only invoices, `paymentStatus` is omitted — rely on `invoice.status`. NOTE: `paymentStatus` may also be absent when the optional acquiring fetch fails transiently (network blip, backend hiccup); if you expected it but don't see it, call this tool again to retry rather than assuming acquiring is off.",
     {
       invoiceId: z.number().int().describe("Numeric invoice id"),
     },
