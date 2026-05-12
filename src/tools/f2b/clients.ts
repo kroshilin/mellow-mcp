@@ -6,7 +6,7 @@ import { currencyToId, f2bClientStatusEnum, f2bCurrencyEnum, mapCurrencyIdToCode
 export function registerF2bClientTools(server: McpServer, client: MellowClient) {
   server.tool(
     "f2b_createClient",
-    "Create a new F2B (freelancer-to-business) legal client. Currency (EUR or USD) is fixed at creation and cannot be changed later. Required: email, country (ISO-3166 alpha-2), currency. All other fields optional. Status starts as 'not_verified' — this does NOT block invoicing; verification triggers on the client's first payment attempt. The freelancer can immediately create and send invoices to a not_verified client. There is no contactName/phone in the F2B model — do not invent these fields.",
+    "Create a new F2B (freelancer-to-business) legal client. Currency (EUR or USD) is fixed at creation and cannot be changed later. Required: email, country (ISO-3166 alpha-2), currency. All other fields optional. Status starts as 'not_verified' — this does NOT block invoicing; verification triggers on the client's first payment attempt. The freelancer can immediately create and send invoices to a not_verified client. There is no contactName/phone in the F2B model — do not invent these fields. Address fields (address, city, region, postalCode) are accepted as flat input but the backend returns them nested under an `address: {address, city, region, postalCode, country}` object — do not be surprised by the shape mismatch when reading the response.",
     {
       email: z.string().email().describe("Email where the invoice link will be sent"),
       country: z.string().length(2).describe("ISO-3166 alpha-2 country code, e.g. CY, US, DE"),

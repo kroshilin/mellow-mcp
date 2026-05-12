@@ -179,3 +179,6 @@ dist
 # macOS
 .DS_Store
 **/.DS_Store
+
+# Planning docs — kept locally, lives in product-department workspace
+docs/plans/

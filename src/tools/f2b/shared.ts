@@ -23,9 +23,21 @@ export function idToCurrency(currencyId: number): "EUR" | "USD" | undefined {
 }
 
 /**
- * Recursively replace `currencyId: number` with `currency: 'EUR' | 'USD'` in
- * any backend response shape. Returns a structural clone — does not mutate
- * the input. Unknown currency ids are passed through untouched.
+ * Recursively normalize backend's currency representation to a flat ISO code.
+ *
+ * Mellow returns currency in two shapes depending on the endpoint:
+ *  - `currencyId: number` — old style (e.g. some legacy fields)
+ *  - `currency: { currency: string, id: number }` — current style for F2B
+ *    clients (`/api/freelancer/f2b/clients/legal` POST/GET responses)
+ *
+ * Both are flattened to `currency: 'EUR' | 'USD'` so the agent always sees a
+ * single string field. Returns a structural clone — does not mutate the input.
+ * Unknown currency ids / shapes are passed through untouched.
+ *
+ * Discovered during slice 1 post-release testing 2026-05-11
+ * (docs/plans/2026-05-11-f2b-slice1-post-release-tests-report.md, Bug 1):
+ * the `currency` object branch was missing, so the agent saw nested objects
+ * even though every tool description promised a flat ISO code.
  */
 export function mapCurrencyIdToCode<T>(value: T): T {
   if (Array.isArray(value)) {
@@ -36,6 +48,16 @@ export function mapCurrencyIdToCode<T>(value: T): T {
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       if (k === "currencyId" && typeof v === "number") {
         out.currency = idToCurrency(v) ?? v;
+      } else if (
+        k === "currency" &&
+        v !== null &&
+        typeof v === "object" &&
+        !Array.isArray(v) &&
+        typeof (v as Record<string, unknown>).currency === "string"
+      ) {
+        // Backend shape: { currency: { currency: "EUR", id: 3 } }
+        // Flatten to: { currency: "EUR" }
+        out.currency = (v as Record<string, unknown>).currency;
       } else {
         out[k] = mapCurrencyIdToCode(v);
       }
