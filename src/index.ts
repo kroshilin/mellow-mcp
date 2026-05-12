@@ -28,6 +28,7 @@ import { registerScoutPoolTools } from "./tools/scout/pool";
 import { registerScoutPositionTools } from "./tools/scout/positions";
 import { registerScoutPromoPostTools } from "./tools/scout/promo-posts";
 import { registerF2bClientTools } from "./tools/f2b/clients";
+import { registerF2bInvoiceTools } from "./tools/f2b/invoices";
 import { refreshUpstreamToken, type Props } from "./utils";
 
 export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
@@ -80,9 +81,11 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
       }
 
       if (userRole === "freelancer") {
-        // F2B (freelancer-to-business invoicing). First slice: client management.
-        // Invoice tools and other freelancer-side surface land in subsequent PRs.
+        // F2B (freelancer-to-business invoicing). Slice 1 shipped client mgmt
+        // (create/list); slice 2 adds invoice tools (create-draft, send,
+        // get, list, cancel) and the rest of client mgmt (update, archive).
         registerF2bClientTools(this.server, client);
+        registerF2bInvoiceTools(this.server, client);
         registerProfileTools(this.server, client);
       }
 
