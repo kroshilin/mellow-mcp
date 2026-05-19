@@ -18,6 +18,7 @@ export function registerReferenceFallbackTool(server: McpServer, docs: { domain:
     async ({ uri }) => {
       const text = map[uri];
       return {
+        // Hand-built object literal — already a record, no asStructuredObject wrap needed.
         structuredContent: { uri, mimeType: "text/markdown", text } as { [key: string]: unknown },
         content: [{ type: "text" as const, text }],
       };
