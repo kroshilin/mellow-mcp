@@ -28,11 +28,11 @@ Non-blocking tasks deferred from QA sessions. Pick one at a time when there's ba
 
 **Rewrite pattern:**
 
-| before | after |
-|---|---|
+| before                               | after                                                                                                  |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
 | `Returns HTTP 422 'already in team'` | `If the freelancer is already in this company, the call fails — surface 'already in team' to the user` |
-| `those return HTTP 400` | `the call will fail in those states` |
-| `Otherwise HTTP 400` | `Otherwise the call fails` |
+| `those return HTTP 400`              | `the call will fail in those states`                                                                   |
+| `Otherwise HTTP 400`                 | `Otherwise the call fails`                                                                             |
 
 **Keep as-is:**
 
