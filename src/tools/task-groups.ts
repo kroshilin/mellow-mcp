@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { asStructuredList, type MellowClient } from "../mellow-client";
+import { asStructuredList, asStructuredObject, type MellowClient } from "../mellow-client";
 
 export function registerTaskGroupTools(server: McpServer, client: MellowClient) {
   server.tool("listTaskGroups", "List all task groups", {}, { title: "List task groups", readOnlyHint: true }, async () => {
@@ -21,7 +21,7 @@ export function registerTaskGroupTools(server: McpServer, client: MellowClient) 
     async ({ title }) => {
       const result = await client.post<unknown>("/customer/task-groups", { title });
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -38,7 +38,7 @@ export function registerTaskGroupTools(server: McpServer, client: MellowClient) 
     async (params) => {
       const result = await client.put<unknown>("/customer/task-groups", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -54,7 +54,7 @@ export function registerTaskGroupTools(server: McpServer, client: MellowClient) 
     async ({ groupId }) => {
       const result = await client.del<unknown>("/customer/task-groups", { groupId });
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },

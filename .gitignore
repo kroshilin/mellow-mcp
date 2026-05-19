@@ -183,6 +183,9 @@ dist
 # Planning docs — kept locally, lives in product-department workspace
 docs/plans/
 
+# Internal style guide — kept locally, not bundled to the worker, not in PRs
+docs/STYLE.md
+
 # Vitest
 node_modules/.vitest/
 coverage/

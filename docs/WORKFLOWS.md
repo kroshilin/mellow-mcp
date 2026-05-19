@@ -29,9 +29,7 @@
    - `getTaskAttributes()` — fetch the catalog and filter client-side by category to find the 3 mandatory attributes.
    - currency: if non-default, `getAllowedCurrencies()` to verify it's permitted.
    - **Title character whitelist:** only `- , . : ; ( ) _ " № % # @ ^ « »` are allowed as special characters. Em-dash (`—`), en-dash (`–`), and other Unicode punctuation are rejected with HTTP 422. Replace with a hyphen-minus before sending.
-4. **Create the task as a draft.** This MCP creates state-17 `DRAFT` by default — no `createType` flag is needed:
-   `createTask({title, description, workerId, categoryId, price, deadline, attributes, workerCurrency?, externalId?})`
-   Returns `{uuid, taskId}`. The task is now in `DRAFT (17)`.
+4. **Create the task.** `createTask({title, description, workerId, categoryId, price, deadline, attributes, workerCurrency?, externalId?})` returns `{uuid}` only. The backend picks the initial state from the company balance: `NEW (1)` if `available ≥ priceWithCommission`, `DRAFT (17)` otherwise — silently, no error. There is no `createType` flag. Always call `getTask(uuid)` next to read the actual `state`.
 5. **Pre-check requirements** (now possible because the task exists):
    `checkTaskRequirements({taskUuid, freelancerUuid})`.
    - Empty list → freelancer can accept right away.
@@ -426,7 +424,6 @@
 | `taskGroupId` | optional | If grouping into a project. Pass to `createTask` as `editGroup: [taskGroupId]` (legacy plural; single-element array). Resolve task group IDs via `listTaskGroups`/`createTaskGroup` first. |
 | `copyright`, `needReport` | optional booleans | Defaults: false |
 | `shareCommission` | optional | Default: false |
-| `createType` | optional | `draft` recommended for review-before-publish |
 
 **Steps:**
 
@@ -473,9 +470,11 @@
        attributes: [{id, value}, ...],
        workerCurrency?,
        externalId,
-       createType: 'draft',  // recommended — lets the user review before publishing
        copyright?, needReport?, shareCommission?, editGroup: [taskGroupId]?
      })
+     // Rows land in NEW (1) if balance ≥ priceWithCommission, else DRAFT (17) silently.
+     // For "review before publish" bulk imports: leave company balance below the
+     // batch total so all rows land in DRAFT, then publishDraftTask per row after review.
    ```
    - Pace at 1 request per 200–500ms (token-shared rate limits).
    - On 400 with field violations: record `{rowNumber, status: 'failed', reason: <violations>}` and continue.

@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { MellowClient } from "../../mellow-client";
+import { asStructuredObject, type MellowClient } from "../../mellow-client";
 
 export function registerScoutAiTaskTools(server: McpServer, client: MellowClient) {
   server.tool(
@@ -13,7 +13,7 @@ export function registerScoutAiTaskTools(server: McpServer, client: MellowClient
     async ({ request }) => {
       const result = await client.post<unknown>("/ai/tasks/generate-position", { request, source: "app" });
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -29,7 +29,7 @@ export function registerScoutAiTaskTools(server: McpServer, client: MellowClient
     async ({ taskId }) => {
       const result = await client.get<unknown>(`/ai/tasks/generate-position/${taskId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },

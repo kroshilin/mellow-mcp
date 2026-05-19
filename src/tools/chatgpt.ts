@@ -107,6 +107,7 @@ export function registerChatGptTools(server: McpServer, client: MellowClient) {
       await Promise.all([taskSearch, freelancerSearch]);
 
       return {
+        // Hand-built object literal — already a record, no asStructuredObject wrap needed.
         structuredContent: { results } as { [key: string]: unknown },
         content: [
           {
@@ -170,6 +171,7 @@ export function registerChatGptTools(server: McpServer, client: MellowClient) {
       };
 
       return {
+        // Hand-built object literal — already a record, no asStructuredObject wrap needed.
         structuredContent: payload as { [key: string]: unknown },
         content: [
           {

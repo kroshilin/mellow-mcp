@@ -66,7 +66,8 @@ If balance is insufficient: HTTP 400 → task stays in current state, no async r
 - \`deadline\`: ISO-8601 with explicit timezone.
 - \`title\`: only special chars \`- , . : ; ( ) _ " № % # @ ^ « »\`. Em-dash (—) → 422.
 - \`workerCurrency\`: ISO string (USD/EUR/RUB/KZT) — must be in \`getAllowedCurrencies()\`.
-- Backend validates the same way for \`createType=draft\` — pre-check via \`checkTaskRequirements\` AFTER createTask (the task UUID must already exist).
+- Balance gate: if the company balance does not cover the task cost, \`createTask\` silently saves the task as \`DRAFT\` instead of publishing it as \`NEW\` — no error is raised. Pre-check via \`getCompanyBalance\`, and verify the resulting state with \`getTask(uuid)\` after create. There is no \`createType\` flag on this endpoint.
+- \`checkTaskRequirements\` runs AFTER createTask — the task UUID must already exist before you can pre-check freelancer requirements.
 - For idempotent retries: use \`externalId\` + \`listTasks(filter[externalId]=...)\` to detect prior success. \`uuid\` is **NOT** an idempotency key — duplicates return 400.
 
 ## Application states (Scout)

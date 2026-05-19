@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { asStructuredList, type MellowClient } from "../mellow-client";
+import { asStructuredList, asStructuredObject, type MellowClient } from "../mellow-client";
 
 export function registerFreelancerTools(server: McpServer, client: MellowClient) {
   server.tool(
@@ -30,7 +30,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
         .describe("Sort field (default: id)"),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction (default: desc)"),
       page: z.number().optional().describe("Page number"),
-      size: z.number().max(500).optional().describe("Page size (max 500). Values > 500 silently fall back to 20."),
+      size: z.number().max(500).optional().describe("Page size (max 500). Values > 500 silently default to 20."),
     },
     { title: "List freelancers", readOnlyHint: true },
     async (params) => {
@@ -85,7 +85,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ freelancerId }) => {
       const result = await client.get<unknown>(`/customer/freelancers/${freelancerId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -93,7 +93,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "inviteFreelancer",
-    "Invite a freelancer to the active company by email. Creates the user if they don't exist, then adds membership. Returns {uuid, freelancerId}. Idempotency: re-inviting an already-active membership → HTTP 422 'already in team'; concurrent invites on the same email → HTTP 423 (short backend lock). For new users name/address/birthdate apply at creation; for existing freelancers only `note` and `specialization` are saved, the rest is ignored. `phone` is silently ignored if the company doesn't have phone-feature enabled.",
+    "Invite a freelancer to the active company by email. Creates the user if they don't exist, then adds membership. Returns {uuid, freelancerId}. Idempotency: re-inviting an already-active membership → HTTP 422 'already in team'; concurrent invites on the same email → HTTP 423 (brief backend lock). For new users name/address/birthdate apply at creation; for existing freelancers only `note` and `specialization` are saved, the rest is ignored. `phone` is silently ignored if the company doesn't have phone-feature enabled.",
     {
       email: z.string().describe("Freelancer email address"),
       phone: z.string().optional().describe("Phone number (silently ignored if company doesn't have phone-feature)"),
@@ -129,7 +129,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async (params) => {
       const result = await client.post<unknown>("/customer/freelancers", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -145,7 +145,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ email }) => {
       const result = await client.get<unknown>(`/customer/freelancer-by-email/${encodeURIComponent(email)}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -161,7 +161,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ phone }) => {
       const result = await client.get<unknown>(`/customer/freelancer-by-phone/${encodeURIComponent(phone)}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -182,7 +182,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async (params) => {
       const result = await client.put<unknown>("/customer/freelancers", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -214,7 +214,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async (params) => {
       const result = await client.patch<unknown>("/customer/freelancers/profile", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -230,7 +230,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ freelancerId }) => {
       const result = await client.del<unknown>(`/customer/freelancers/${freelancerId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -246,7 +246,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ freelancerId }) => {
       const result = await client.get<unknown>(`/customer/freelancers/tax-info/${freelancerId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },

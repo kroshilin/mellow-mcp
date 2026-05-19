@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { MellowClient } from "../../mellow-client";
+import { asStructuredObject, type MellowClient } from "../../mellow-client";
 
 export function registerScoutAttachmentTools(server: McpServer, client: MellowClient) {
   server.tool(
@@ -13,7 +13,7 @@ export function registerScoutAttachmentTools(server: McpServer, client: MellowCl
     async ({ id }) => {
       const result = await client.get<unknown>(`/attachments/${id}/metadata`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
