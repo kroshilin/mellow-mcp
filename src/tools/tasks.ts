@@ -105,7 +105,7 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
 
   server.tool(
     "createTask",
-    "Create a new task for a freelancer. Pass createType='draft' to save as DRAFT (publish later via publishDraftTask); omit it (or pass 'published') to create directly in NEW. Title is auto-normalized client-side (em/en-dash → hyphen, curly quotes → straight, NBSP → space) to avoid the backend's special-char whitelist 422.",
+    "Create a task for a freelancer. Returns the new task UUID only — call getTask(uuid) right after to see the full task and its state. If the company balance covers the task cost, the task is published (NEW) and the freelancer sees it. If the balance is insufficient, the task is silently saved as DRAFT with no error — the user won't see it in their active tasks until they top up at https://my.mellow.io/ → Finances → Top up and you call publishDraftTask. Pre-check getCompanyBalance to know which path to expect. Title is normalized (em-dashes, curly quotes, NBSP) before send.",
     {
       title: z
         .string()
@@ -117,7 +117,7 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
       categoryId: z
         .number()
         .describe(
-          "Service ID from getServices() (required). Wire-name `categoryId` is legacy from a V1 catalogue; under the current V2 model this is always a leaf-level service id, not a parent category. Passing a parent category returns 422 'Service is not available'.",
+          'Required service ID from getServices(). Despite the name `categoryId`, this expects a service (leaf), not its category (parent) — wrong type fails with "Service is not available".',
         ),
       price: z.number().describe("Task price"),
       deadline: z
@@ -147,15 +147,14 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
       workerCurrency: z.string().optional().describe("ISO currency code for worker payment (USD, EUR, RUB, KZT)."),
       shareCommission: z.boolean().optional().describe("Share commission with worker"),
       validateOnly: z.boolean().optional().describe("Only run validators without writing — dry run."),
-      acceptanceFileTemplateIds: z
+      acceptanceFileIds: z
         .array(z.number())
         .optional()
-        .describe("IDs of acceptance document templates the freelancer must sign. Look up via getAcceptanceDocuments."),
-      editGroup: z.array(z.number()).optional().describe("Task group IDs (legacy plural; pass a single-element array)."),
-      createType: z
-        .enum(["draft", "published"])
+        .describe("IDs of acceptance documents the freelancer must sign. Look up via getAcceptanceDocuments."),
+      editGroup: z
+        .array(z.number())
         .optional()
-        .describe("Create as DRAFT or directly published (NEW). Default is published. Use 'draft' for review-before-publish flows."),
+        .describe("Task group ID. The field is an array for historical reasons — pass a single ID wrapped in an array: [groupId]."),
     },
     { title: "Create task" },
     async (params) => {
@@ -173,7 +172,7 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
 
   server.tool(
     "publishDraftTask",
-    "Publish a draft task (DRAFT → NEW). Provide either taskId or uuid (not both).",
+    "Publish a draft task: moves it from DRAFT to NEW so the freelancer can see and accept it. Requires the company to have enough balance for the task — if the balance is insufficient, this call fails and the task stays in DRAFT. Call getCompanyBalance first; if the balance does not cover the task, point the user to https://my.mellow.io/ → Finances → Top up (wire transfer, 1-3 business days), then retry. Provide either taskId or uuid (not both).",
     {
       taskId: z.number().optional().describe("Task ID (numeric). Provide this OR uuid."),
       uuid: z.string().optional().describe("Task UUID. Provide this OR taskId."),

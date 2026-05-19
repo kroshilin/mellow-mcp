@@ -30,7 +30,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
         .describe("Sort field (default: id)"),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction (default: desc)"),
       page: z.number().optional().describe("Page number"),
-      size: z.number().max(500).optional().describe("Page size (max 500). Values > 500 silently fall back to 20."),
+      size: z.number().max(500).optional().describe("Page size (max 500). Values > 500 silently default to 20."),
     },
     { title: "List freelancers", readOnlyHint: true },
     async (params) => {
@@ -93,7 +93,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "inviteFreelancer",
-    "Invite a freelancer to the active company by email. Creates the user if they don't exist, then adds membership. Returns {uuid, freelancerId}. Idempotency: re-inviting an already-active membership → HTTP 422 'already in team'; concurrent invites on the same email → HTTP 423 (short backend lock). For new users name/address/birthdate apply at creation; for existing freelancers only `note` and `specialization` are saved, the rest is ignored. `phone` is silently ignored if the company doesn't have phone-feature enabled.",
+    "Invite a freelancer to the active company by email. Creates the user if they don't exist, then adds membership. Returns {uuid, freelancerId}. Idempotency: re-inviting an already-active membership → HTTP 422 'already in team'; concurrent invites on the same email → HTTP 423 (brief backend lock). For new users name/address/birthdate apply at creation; for existing freelancers only `note` and `specialization` are saved, the rest is ignored. `phone` is silently ignored if the company doesn't have phone-feature enabled.",
     {
       email: z.string().describe("Freelancer email address"),
       phone: z.string().optional().describe("Phone number (silently ignored if company doesn't have phone-feature)"),

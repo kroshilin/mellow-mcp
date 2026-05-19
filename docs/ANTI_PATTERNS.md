@@ -264,6 +264,27 @@ aggregate client-side.
 
 ## E. Money traps
 
+### E0 — `createTask` without balance pre-check (silent DRAFT downgrade)
+
+**Bad**
+```
+createTask({title, description, workerId, ...})
+// Agent reports: "task created, the freelancer will see it"
+// Reality: task is in DRAFT — the freelancer cannot see it
+```
+
+**Why** — `createTask` does not fail when the company balance is too low. It silently saves the task as DRAFT instead of publishing it. No error is returned. The agent reports success to the user; the user comes back hours or days later asking why the freelancer never responded — because the task was never actually published.
+
+**Good**
+
+1. Call `getCompanyBalance` first.
+2. If the balance does not cover the task cost, tell the user to top up at https://my.mellow.io/ → Finances → Top up balance (full flow in `mellow://domain` § "Topping up the balance"). Stop — do not call `createTask` until the top-up clears.
+3. After `createTask`, always call `getTask(uuid)` to read the actual state.
+4. If state is **DRAFT**, the balance was short: wait for the user to top up, then call `publishDraftTask`.
+5. If state is **NEW**, the task is published — the freelancer can see and accept it.
+
+---
+
 ### E1 — `acceptTask` without balance pre-check
 
 **Bad**

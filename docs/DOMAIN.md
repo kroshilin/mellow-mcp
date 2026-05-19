@@ -67,9 +67,25 @@ Two ways to set the company context:
 - **Transaction** — line in the company ledger. `type`: `1` top-up, `2` debit, `3` correction, `4` tax. Company-scoped. Payout-related fields (`payoutStatus`, `payoutAmount`, `payoutCommission`, `payoutCurrency`, `rate`, `tax`) populated only on payout-type lines.
   - **Currency values** (`filter[currency]` and `currency` field): `1 RUB`, `2 USD`, `3 EUR`, `4 KZT`.
   - **Payout sub-status** (`filter[payoutStatus]`): `0 UNKNOWN`, `1 IN_PROCESS`, `2 DONE`, `3 DECLINE`, `4 DECLINE_NOT_FINISH`, `5 PARTIALLY_FINISHED`, `10 NEW`, `11 COMPLIANCE`.
-- **Balance** — company funds in Mellow, available to settle tasks. Topped up manually. **One currency per company**, fixed at company creation.
+- **Balance** — company funds in Mellow, available to settle tasks. Topped up via the web cabinet (see "Topping up the balance" below). **One currency per company**, fixed at company creation.
 - **Allowed Currencies** (per company) — subset for multi-currency tasks. USD/EUR always included; rest depend on company config.
 - **Exchange Rate** — Mellow's internal FX rates (`{base, target, rate}` triples) used by multi-currency tasks.
+
+### Topping up the balance
+
+Mellow does not expose a top-up API — there is no MCP tool for it. When the agent detects the company balance is insufficient (via `getCompanyBalance`, or after a 409 / silent-DRAFT signal from `publishDraftTask` / `createTask`), direct the user to the web cabinet:
+
+1. Open https://my.mellow.io/ → log in with the same account.
+2. Pick the company that needs funding (top-left switcher if multi-company).
+3. Go to **Finances → Top up balance**.
+4. Choose the amount; currency is fixed to the company's balance currency.
+5. The system generates a top-up invoice (it will later appear in `listDocuments` as `type=6 INVOICE`).
+6. The user wires the funds to the IBAN on that invoice. **SEPA: 1–3 business days. SWIFT: up to 5.**
+7. Mellow credits the balance automatically once funds clear. No manual confirmation needed.
+
+If the user is stuck or the wire doesn't show up after the expected window — Mellow support: support@mellow.io.
+
+Tool descriptions for `createTask`, `publishDraftTask`, `acceptTask`, and `payForTask` carry the `https://my.mellow.io/` pointer inline for fast recovery — this section is the fuller reference if the user wants detail.
 
 ### Documents
 
@@ -110,8 +126,7 @@ Happy path: `DRAFT → NEW → IN_WORK → RESULT → FOR_PAYMENT → PAYMENT_QU
 
 | From → To | Tool |
 |---|---|
-| (none) → `DRAFT` | `createTask` with `createType=draft` |
-| (none) → `NEW` | `createTask` (default) |
+| (none) → `NEW` or `DRAFT` | `createTask` — `NEW` when balance ≥ `priceWithCommission`, `DRAFT` otherwise (silent backend downgrade; verify via `getTask(uuid).state`) |
 | `DRAFT` → `NEW` | `publishDraftTask` |
 | `RESULT` → `FOR_PAYMENT` | `acceptTask` (also from `WAITING_DECLINE_BY_WORKER` / `WAITING_FOR_CUSTOMER_DEADLINE_DECISION`) |
 | `FOR_PAYMENT` → `PAYMENT_QUEUED` | `payForTask` |
@@ -309,9 +324,10 @@ Exactly two: `admin` and `member`. No intermediate roles. `admin` has full permi
 → (pre-check) getTaskAttributes() — filter client-side by category, fill 3 mandatory pairs
 → (multi-currency) getAllowedCurrencies() — verify the chosen workerCurrency is allowed
 → createTask({title, description, workerId, categoryId, price, deadline, attributes,
-              workerCurrency?, externalId?, createType?: "draft"})
-   - draft → DRAFT (publish later via publishDraftTask)
-   - default → published (NEW)
+              workerCurrency?, externalId?})
+   - balance ≥ priceWithCommission → NEW (1)
+   - balance insufficient → DRAFT (17) silently; top up then publishDraftTask
+   - always getTask(uuid).state to confirm
 → (recommended, post-create) checkTaskRequirements(taskUuid, freelancerUuid) — surface unmet items
 ```
 
