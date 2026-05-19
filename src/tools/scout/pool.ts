@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { asStructuredList, type MellowClient } from "../../mellow-client";
+import { asStructuredList, asStructuredObject, type MellowClient } from "../../mellow-client";
 
 export function registerScoutPoolTools(server: McpServer, client: MellowClient) {
   server.tool(
@@ -11,7 +11,7 @@ export function registerScoutPoolTools(server: McpServer, client: MellowClient) 
     async () => {
       const result = await client.get<unknown>("/private-pools/");
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -54,7 +54,7 @@ export function registerScoutPoolTools(server: McpServer, client: MellowClient) 
     async ({ poolId, freelancerId }) => {
       const result = await client.get<unknown>(`/private-pools/${poolId}/freelancers/${freelancerId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -79,7 +79,7 @@ export function registerScoutPoolTools(server: McpServer, client: MellowClient) 
     async ({ poolId, ...body }) => {
       const result = await client.post<unknown>(`/private-pools/${poolId}/freelancers/`, body);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -105,7 +105,7 @@ export function registerScoutPoolTools(server: McpServer, client: MellowClient) 
     async ({ poolId, freelancerId, ...body }) => {
       const result = await client.put<unknown>(`/private-pools/${poolId}/freelancers/${freelancerId}`, body);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -122,7 +122,7 @@ export function registerScoutPoolTools(server: McpServer, client: MellowClient) 
     async ({ poolId, freelancerId }) => {
       const result = await client.del<unknown>(`/private-pools/${poolId}/freelancers/${freelancerId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -139,7 +139,7 @@ export function registerScoutPoolTools(server: McpServer, client: MellowClient) 
     async ({ poolId, ids }) => {
       const result = await client.del<unknown>(`/private-pools/${poolId}/freelancers/`, { ids });
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },

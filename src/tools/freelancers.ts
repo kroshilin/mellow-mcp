@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { asStructuredList, type MellowClient } from "../mellow-client";
+import { asStructuredList, asStructuredObject, type MellowClient } from "../mellow-client";
 
 export function registerFreelancerTools(server: McpServer, client: MellowClient) {
   server.tool(
@@ -85,7 +85,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ freelancerId }) => {
       const result = await client.get<unknown>(`/customer/freelancers/${freelancerId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -129,7 +129,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async (params) => {
       const result = await client.post<unknown>("/customer/freelancers", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -145,7 +145,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ email }) => {
       const result = await client.get<unknown>(`/customer/freelancer-by-email/${encodeURIComponent(email)}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -161,7 +161,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ phone }) => {
       const result = await client.get<unknown>(`/customer/freelancer-by-phone/${encodeURIComponent(phone)}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -182,7 +182,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async (params) => {
       const result = await client.put<unknown>("/customer/freelancers", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -214,7 +214,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async (params) => {
       const result = await client.patch<unknown>("/customer/freelancers/profile", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -230,7 +230,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ freelancerId }) => {
       const result = await client.del<unknown>(`/customer/freelancers/${freelancerId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -246,7 +246,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     async ({ freelancerId }) => {
       const result = await client.get<unknown>(`/customer/freelancers/tax-info/${freelancerId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },

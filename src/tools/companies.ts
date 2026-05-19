@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { asStructuredList, type MellowClient } from "../mellow-client";
+import { asStructuredList, asStructuredObject, type MellowClient } from "../mellow-client";
 
 export function registerCompanyTools(server: McpServer, client: MellowClient) {
   server.tool(
@@ -27,7 +27,7 @@ export function registerCompanyTools(server: McpServer, client: MellowClient) {
     async ({ companyId }) => {
       const result = await client.post<unknown>(`/customer/companies/${companyId}/default`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -41,7 +41,7 @@ export function registerCompanyTools(server: McpServer, client: MellowClient) {
     async () => {
       const result = await client.get<unknown>("/customer/balance");
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },

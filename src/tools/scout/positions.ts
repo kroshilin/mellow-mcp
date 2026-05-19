@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { asStructuredList, type MellowClient } from "../../mellow-client";
+import { asStructuredList, asStructuredObject, type MellowClient } from "../../mellow-client";
 
 export function registerScoutPositionTools(server: McpServer, client: MellowClient) {
   server.tool(
@@ -39,7 +39,7 @@ export function registerScoutPositionTools(server: McpServer, client: MellowClie
         trackView: trackView?.toString(),
       });
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -93,7 +93,7 @@ export function registerScoutPositionTools(server: McpServer, client: MellowClie
     async (params) => {
       const result = await client.post<unknown>("/positions", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -147,7 +147,7 @@ export function registerScoutPositionTools(server: McpServer, client: MellowClie
     async ({ positionId, ...body }) => {
       const result = await client.put<unknown>(`/positions/${positionId}`, body);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -163,7 +163,7 @@ export function registerScoutPositionTools(server: McpServer, client: MellowClie
     async ({ positionId }) => {
       const result = await client.del<unknown>(`/positions/${positionId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -179,7 +179,7 @@ export function registerScoutPositionTools(server: McpServer, client: MellowClie
     async ({ positionId }) => {
       const result = await client.post<unknown>(`/positions/${positionId}/open`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -196,7 +196,7 @@ export function registerScoutPositionTools(server: McpServer, client: MellowClie
     async ({ positionId, shareTarget }) => {
       const result = await client.post<unknown>(`/positions/${positionId}/share`, { shareTarget });
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },

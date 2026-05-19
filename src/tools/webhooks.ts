@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { MellowClient } from "../mellow-client";
+import { asStructuredObject, type MellowClient } from "../mellow-client";
 
 export function registerWebhookTools(server: McpServer, client: MellowClient) {
   server.tool("getWebhook", "Get the current webhook configuration.", {}, { title: "Get webhook", readOnlyHint: true }, async () => {
     const result = await client.get<unknown>("/customer/web-hook");
     return {
-      structuredContent: result as { [key: string]: unknown },
+      structuredContent: asStructuredObject(result),
       content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
     };
   });
@@ -22,7 +22,7 @@ export function registerWebhookTools(server: McpServer, client: MellowClient) {
     async (params) => {
       const result = await client.post<unknown>("/webhooks", params);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -38,7 +38,7 @@ export function registerWebhookTools(server: McpServer, client: MellowClient) {
     async ({ webhookId }) => {
       const result = await client.del<unknown>(`/webhooks/${webhookId}`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },

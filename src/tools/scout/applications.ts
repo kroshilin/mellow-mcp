@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { asStructuredList, type MellowClient } from "../../mellow-client";
+import { asStructuredList, asStructuredObject, type MellowClient } from "../../mellow-client";
 
 export function registerScoutApplicationTools(server: McpServer, client: MellowClient) {
   server.tool(
@@ -63,7 +63,7 @@ export function registerScoutApplicationTools(server: McpServer, client: MellowC
         trackStatus: trackStatus?.toString(),
       });
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -82,7 +82,7 @@ export function registerScoutApplicationTools(server: McpServer, client: MellowC
     async ({ applicationId, status }) => {
       const result = await client.patch<unknown>(`/applications/${applicationId}/status`, { status });
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
@@ -98,7 +98,7 @@ export function registerScoutApplicationTools(server: McpServer, client: MellowC
     async ({ applicationId }) => {
       const result = await client.post<unknown>(`/applications/${applicationId}/invite`);
       return {
-        structuredContent: result as { [key: string]: unknown },
+        structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
       };
     },
