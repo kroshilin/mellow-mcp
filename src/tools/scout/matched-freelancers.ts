@@ -82,4 +82,20 @@ export function registerMatchedFreelancersTools(server: McpServer, client: Mello
       };
     },
   );
+
+  server.tool(
+    "scout_requestMatching",
+    "Ask the backend to re-run matching for a position. Async — returns immediately with status='in_progress' and matches=[]; poll scout_listMatchedFreelancers for results. Use ONLY when (a) the user updated the position and wants fresh candidates, (b) the previous run is in 'failed' state, or (c) the user explicitly asks to refresh. Do NOT call right after creating a position — matching auto-starts on create, calling again returns 409. Rate-limited 3 requests/hour/position; 429 if exceeded. 409 also fires if a run is already in progress or the previous results are still valid.",
+    {
+      positionId: z.string().uuid().describe("Position UUID"),
+    },
+    { title: "Scout: request matching re-run", openWorldHint: true },
+    async ({ positionId }) => {
+      const result = await client.post<unknown>(`/positions/${positionId}/matched-freelancers`);
+      return {
+        structuredContent: asStructuredObject(result),
+        content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
+      };
+    },
+  );
 }

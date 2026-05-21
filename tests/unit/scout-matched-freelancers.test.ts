@@ -192,3 +192,59 @@ describe("scout_inviteMatchedFreelancer", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("scout_requestMatching", () => {
+  it("POSTs /positions/{positionId}/matched-freelancers and returns the in-progress envelope", async () => {
+    const positionId = "00000000-0000-0000-0000-000000000001";
+    const { stub, calls } = makeClientStub({
+      [`POST /positions/${positionId}/matched-freelancers`]: {
+        status: "in_progress",
+        matches: [],
+      },
+    });
+    const { server, invoke } = makeServerStub();
+    registerMatchedFreelancersTools(server, stub as never);
+
+    const result = (await invoke("scout_requestMatching", { positionId })) as {
+      structuredContent: Record<string, unknown>;
+    };
+
+    expect(calls).toEqual([{ method: "POST", path: `/positions/${positionId}/matched-freelancers`, body: undefined }]);
+    expect(result.structuredContent.status).toBe("in_progress");
+    expect(result.structuredContent.matches).toEqual([]);
+  });
+
+  it("propagates 429 (rate-limited) as an error", async () => {
+    const positionId = "00000000-0000-0000-0000-000000000001";
+    const stub = {
+      get: async () => undefined,
+      post: async (path: string) => {
+        throw new Error(`Mellow API POST ${path} failed (429): {"message":"too many requests"}`);
+      },
+      put: async () => undefined,
+      patch: async () => undefined,
+      del: async () => undefined,
+    };
+    const { server, invoke } = makeServerStub();
+    registerMatchedFreelancersTools(server, stub as never);
+
+    await expect(invoke("scout_requestMatching", { positionId })).rejects.toThrow(/429/);
+  });
+
+  it("propagates 409 when matching is already in progress", async () => {
+    const positionId = "00000000-0000-0000-0000-000000000001";
+    const stub = {
+      get: async () => undefined,
+      post: async (path: string) => {
+        throw new Error(`Mellow API POST ${path} failed (409): {"message":"matchingInProgress"}`);
+      },
+      put: async () => undefined,
+      patch: async () => undefined,
+      del: async () => undefined,
+    };
+    const { server, invoke } = makeServerStub();
+    registerMatchedFreelancersTools(server, stub as never);
+
+    await expect(invoke("scout_requestMatching", { positionId })).rejects.toThrow(/matchingInProgress/);
+  });
+});
