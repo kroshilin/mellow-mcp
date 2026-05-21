@@ -48,4 +48,21 @@ export function registerMatchedFreelancersTools(server: McpServer, client: Mello
       };
     },
   );
+
+  server.tool(
+    "scout_markMatchedFreelancerViewed",
+    "Mark a matched freelancer as viewed by the hirer. Backend sets viewedAt on first call; status transitions new → viewed. Idempotent — call every time the user opens a candidate's card; repeated calls do not overwrite the first viewedAt. Returns wrapped 'Ok' envelope ({ok: true, raw: 'Ok'}).",
+    {
+      positionId: z.string().uuid().describe("Position UUID"),
+      matchId: z.string().uuid().describe("Match UUID"),
+    },
+    { title: "Scout: mark matched freelancer viewed" },
+    async ({ positionId, matchId }) => {
+      const result = await client.post<unknown>(`/positions/${positionId}/matched-freelancers/${matchId}/view`);
+      return {
+        structuredContent: asStructuredObject(result),
+        content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
+      };
+    },
+  );
 }

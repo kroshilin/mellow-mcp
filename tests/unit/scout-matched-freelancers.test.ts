@@ -131,3 +131,22 @@ describe("scout_getMatchedFreelancer", () => {
     expect(result.structuredContent.status).toBe("viewed");
   });
 });
+
+describe("scout_markMatchedFreelancerViewed", () => {
+  it("POSTs /positions/{positionId}/matched-freelancers/{matchId}/view and wraps the 'Ok' body", async () => {
+    const positionId = "00000000-0000-0000-0000-000000000001";
+    const matchId = "11111111-1111-1111-1111-111111111111";
+    const { stub, calls } = makeClientStub({
+      [`POST /positions/${positionId}/matched-freelancers/${matchId}/view`]: "Ok",
+    });
+    const { server, invoke } = makeServerStub();
+    registerMatchedFreelancersTools(server, stub as never);
+
+    const result = (await invoke("scout_markMatchedFreelancerViewed", { positionId, matchId })) as {
+      structuredContent: Record<string, unknown>;
+    };
+
+    expect(calls).toEqual([{ method: "POST", path: `/positions/${positionId}/matched-freelancers/${matchId}/view`, body: undefined }]);
+    expect(result.structuredContent).toEqual({ ok: true, raw: "Ok" });
+  });
+});
