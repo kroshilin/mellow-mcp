@@ -31,4 +31,21 @@ export function registerMatchedFreelancersTools(server: McpServer, client: Mello
       };
     },
   );
+
+  server.tool(
+    "scout_getMatchedFreelancer",
+    "Get one matched freelancer in the context of a specific position. Returns the same match object as one element of scout_listMatchedFreelancers' matches[] — including matchId, score, explanation, status, full profile. Use this when the user opens a detail screen separately from the list, or when you need the freshest status (the cached list may be stale).",
+    {
+      positionId: z.string().uuid().describe("Position UUID"),
+      matchId: z.string().uuid().describe("Match UUID — from scout_listMatchedFreelancers matches[].matchId"),
+    },
+    { title: "Scout: get matched freelancer", readOnlyHint: true },
+    async ({ positionId, matchId }) => {
+      const result = await client.get<unknown>(`/positions/${positionId}/matched-freelancers/${matchId}`);
+      return {
+        structuredContent: asStructuredObject(result),
+        content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
+      };
+    },
+  );
 }

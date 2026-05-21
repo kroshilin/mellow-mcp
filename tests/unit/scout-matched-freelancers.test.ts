@@ -106,3 +106,28 @@ describe("scout_listMatchedFreelancers", () => {
     expect(Array.isArray(result.structuredContent.matches)).toBe(true);
   });
 });
+
+describe("scout_getMatchedFreelancer", () => {
+  it("GETs /positions/{positionId}/matched-freelancers/{matchId}", async () => {
+    const positionId = "00000000-0000-0000-0000-000000000001";
+    const matchId = "11111111-1111-1111-1111-111111111111";
+    const { stub, calls } = makeClientStub({
+      [`GET /positions/${positionId}/matched-freelancers/${matchId}`]: {
+        matchId,
+        score: 95.0,
+        status: "viewed",
+        profile: { email: "test@example.com", firstName: "Иван", lastName: "Иванов" },
+      },
+    });
+    const { server, invoke } = makeServerStub();
+    registerMatchedFreelancersTools(server, stub as never);
+
+    const result = (await invoke("scout_getMatchedFreelancer", { positionId, matchId })) as {
+      structuredContent: Record<string, unknown>;
+    };
+
+    expect(calls).toEqual([{ method: "GET", path: `/positions/${positionId}/matched-freelancers/${matchId}` }]);
+    expect(result.structuredContent.matchId).toBe(matchId);
+    expect(result.structuredContent.status).toBe("viewed");
+  });
+});
