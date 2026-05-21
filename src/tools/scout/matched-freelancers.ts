@@ -65,4 +65,21 @@ export function registerMatchedFreelancersTools(server: McpServer, client: Mello
       };
     },
   );
+
+  server.tool(
+    "scout_inviteMatchedFreelancer",
+    "Send the matched freelancer an email inviting them to apply to the position. Backend creates an invitation record and transitions match status (new|viewed) → invited. NOT idempotent — a second invite for the same matchId returns 409 'alreadyInvited'. CONFIRM with the user before calling — once this returns, the email is in the freelancer's inbox; there is no un-invite. Returns wrapped 'Ok' envelope.",
+    {
+      positionId: z.string().uuid().describe("Position UUID"),
+      matchId: z.string().uuid().describe("Match UUID"),
+    },
+    { title: "Scout: invite matched freelancer", openWorldHint: true },
+    async ({ positionId, matchId }) => {
+      const result = await client.post<unknown>(`/positions/${positionId}/matched-freelancers/${matchId}/invitation`);
+      return {
+        structuredContent: asStructuredObject(result),
+        content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
+      };
+    },
+  );
 }

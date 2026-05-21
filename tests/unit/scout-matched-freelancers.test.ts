@@ -150,3 +150,45 @@ describe("scout_markMatchedFreelancerViewed", () => {
     expect(result.structuredContent).toEqual({ ok: true, raw: "Ok" });
   });
 });
+
+describe("scout_inviteMatchedFreelancer", () => {
+  it("POSTs /positions/{positionId}/matched-freelancers/{matchId}/invitation", async () => {
+    const positionId = "00000000-0000-0000-0000-000000000001";
+    const matchId = "11111111-1111-1111-1111-111111111111";
+    const { stub, calls } = makeClientStub({
+      [`POST /positions/${positionId}/matched-freelancers/${matchId}/invitation`]: "Ok",
+    });
+    const { server, invoke } = makeServerStub();
+    registerMatchedFreelancersTools(server, stub as never);
+
+    const result = (await invoke("scout_inviteMatchedFreelancer", { positionId, matchId })) as {
+      structuredContent: Record<string, unknown>;
+    };
+
+    expect(calls).toEqual([
+      { method: "POST", path: `/positions/${positionId}/matched-freelancers/${matchId}/invitation`, body: undefined },
+    ]);
+    expect(result.structuredContent).toEqual({ ok: true, raw: "Ok" });
+  });
+
+  it("propagates a 409 from the client as a clear error (already invited)", async () => {
+    const positionId = "00000000-0000-0000-0000-000000000001";
+    const matchId = "11111111-1111-1111-1111-111111111111";
+    const calls: { method: string; path: string }[] = [];
+    const stub = {
+      get: async () => undefined,
+      post: async (path: string) => {
+        calls.push({ method: "POST", path });
+        throw new Error(`Mellow API POST ${path} failed (409): {"message":"alreadyInvited"}`);
+      },
+      put: async () => undefined,
+      patch: async () => undefined,
+      del: async () => undefined,
+    };
+    const { server, invoke } = makeServerStub();
+    registerMatchedFreelancersTools(server, stub as never);
+
+    await expect(invoke("scout_inviteMatchedFreelancer", { positionId, matchId })).rejects.toThrow(/alreadyInvited/);
+    expect(calls).toHaveLength(1);
+  });
+});
