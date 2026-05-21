@@ -20,7 +20,7 @@ export function registerMatchedFreelancersTools(server: McpServer, client: Mello
 		"scout_listMatchedFreelancers",
 		"List candidates matched to a position. Returns {status, matches[]}. status='in_progress' means matching is still running — poll every 3-5s, up to 5 min total. 'completed' means matches[] is final, sorted by score DESC. 'failed' means the run errored — suggest scout_requestMatching to retry. Each match has matchId (use in get/markViewed/invite), score, optional explanation, status (new|viewed|invited), and a full profile (name, email, expertise area, country, experience, portfolio, CV, referral rate). Call this after a position is created, after the user reopens the matches screen, and after a manual requestMatching.",
 		{
-			positionId: z.string().describe("Position UUID — id of the position to list matches for"),
+			positionId: z.string().uuid().describe("Position UUID — id of the position to list matches for"),
 		},
 		{ title: "Scout: list matched freelancers", readOnlyHint: true },
 		async ({ positionId }) => {

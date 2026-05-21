@@ -25,12 +25,19 @@ function makeServerStub() {
 function makeClientStub(responses: Record<string, unknown>) {
 	const calls: CapturedCall[] = [];
 	const respond = (method: string, path: string) => {
-		const key = Object.keys(responses).find((k) => {
-			const [m, p] = k.split(" ");
-			return m === method && path.startsWith(p);
-		});
-		if (!key) throw new Error(`no scripted response for ${method} ${path}; available: ${Object.keys(responses).join(", ")}`);
-		return responses[key];
+		// Sort by descending key length so longer/more-specific path prefixes win
+		// over shorter ones — prevents MF-2..MF-5 deep-path tests from silently
+		// matching the shorter list-path key when both startsWith() succeed.
+		const matches = Object.keys(responses)
+			.filter((k) => {
+				const [m, p] = k.split(" ");
+				return m === method && path.startsWith(p);
+			})
+			.sort((a, b) => b.length - a.length);
+		if (matches.length === 0) {
+			throw new Error(`no scripted response for ${method} ${path}; available: ${Object.keys(responses).join(", ")}`);
+		}
+		return responses[matches[0]];
 	};
 	const stub = {
 		get: async (path: string) => { calls.push({ method: "GET", path }); return respond("GET", path); },
