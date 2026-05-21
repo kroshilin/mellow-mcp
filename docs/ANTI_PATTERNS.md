@@ -11,6 +11,7 @@
 ### A1 — Treating `acceptTask` as a one-shot pay
 
 **Bad**
+
 ```
 acceptTask({uuid})   // expecting the task to land in FINISHED
 ```
@@ -18,6 +19,7 @@ acceptTask({uuid})   // expecting the task to land in FINISHED
 **Why** — `acceptTask` only moves `RESULT (3)` → `FOR_PAYMENT (4)`. Payment is a separate explicit step. The task will sit in `FOR_PAYMENT` indefinitely if `payForTask` is never called.
 
 **Good**
+
 ```
 acceptTask({uuid})              // → FOR_PAYMENT
 getCompanyBalance()             // verify available ≥ task cost
@@ -30,22 +32,25 @@ poll getTask(uuid) until FINISHED
 ### A2 — Calling `declineTask` to cancel a live task
 
 **Bad**
+
 ```
 // Task is in NEW or IN_WORK; user says "cancel this".
 declineTask({taskId})
 ```
 
-**Why** — `declineTask` is **only** valid from `WAITING_DECLINE_BY_WORKER (11)`. From `NEW` or `IN_WORK` it returns HTTP 400. There is **no** customer-side single-call cancel anywhere in the API.
+**Why** — `declineTask` is **only** valid from `WAITING_DECLINE_BY_WORKER (11)`. From `NEW`, `IN_WORK`, `DRAFT`, or any other state it returns **HTTP 403 "Access Denied"** (verified on prod 2026-05-21). There is **no** customer-side single-call cancel anywhere in the API.
 
 **Good**
+
 - Tell the user that the only paths are: (a) ask the freelancer to start a decline → then `declineTask`, or (b) open a dispute (not via this MCP).
-- Never silently retry `declineTask` after it 400s.
+- Never silently retry `declineTask` after it 403s.
 
 ---
 
 ### A3 — Calling `resumeTask` from non-RESULT states
 
 **Bad**
+
 ```
 // Task is in IN_WORK; user says "resume" / "restart".
 resumeTask({taskId})
@@ -60,6 +65,7 @@ resumeTask({taskId})
 ### A4 — Calling `changeDeadline` from arbitrary states
 
 **Bad**
+
 ```
 // Task is in NEW or IN_WORK; user says "extend the deadline".
 changeDeadline({uuid, deadline: '2026-06-01T00:00:00Z'})
@@ -74,6 +80,7 @@ changeDeadline({uuid, deadline: '2026-06-01T00:00:00Z'})
 ### A5 — Trying to delete or cancel a `DRAFT`
 
 **Bad**
+
 ```
 // User says "discard this draft".
 declineTask({taskId})
@@ -89,6 +96,7 @@ declineTask({taskId})
 ### A6 — Editing price / currency after publish without checking config
 
 **Bad**
+
 ```
 // Task is in IN_WORK; user wants to change the price.
 // Agent assumes the edit endpoint will work.
@@ -105,6 +113,7 @@ declineTask({taskId})
 ### B1 — Inventing values for missing fields
 
 **Bad**
+
 ```
 // User said "create a task for John for $500".
 // Agent fills in description, deadline, categoryId, attributes from thin air.
@@ -120,6 +129,7 @@ createTask({title: 'Task', description: 'TBD', categoryId: 1, deadline: 'next we
 ### B2 — Treating `uuid` as an idempotency key
 
 **Bad**
+
 ```
 // Network blip on createTask. Retry with the same uuid.
 createTask({uuid: existingUuid, ...})
@@ -135,6 +145,7 @@ createTask({uuid: existingUuid, ...})
 ### B3 — Skipping `categoryId`
 
 **Bad**
+
 ```
 createTask({title, description, workerId, price, deadline, attributes, ...})
 // no categoryId
@@ -149,6 +160,7 @@ createTask({title, description, workerId, price, deadline, attributes, ...})
 ### B4 — Passing `deadline` without timezone
 
 **Bad**
+
 ```
 createTask({deadline: '2026-05-01 15:00:00', ...})
 ```
@@ -162,6 +174,7 @@ createTask({deadline: '2026-05-01 15:00:00', ...})
 ### B5 — Confusing `workerCurrency` ISO string with currency ID
 
 **Bad**
+
 ```
 // User said EUR. Agent has 3 (numeric Currency enum value for EUR).
 createTask({workerCurrency: 3, ...})
@@ -176,6 +189,7 @@ createTask({workerCurrency: 3, ...})
 ### B6 — Treating `validateOnly` as a no-op preview
 
 **Bad**
+
 ```
 // Agent runs validateOnly, sees it succeeds, assumes the task exists.
 createTask({validateOnly: true, ...})
@@ -193,6 +207,7 @@ listTasks({externalId: ...})    // expecting to find it
 ### C1 — Listing tasks immediately after creating one
 
 **Bad**
+
 ```
 createTask({...})
 listTasks({externalId: ...})    // expecting the new task
@@ -208,6 +223,7 @@ listTasks({externalId: ...})    // expecting the new task
 ### C2 — Polling `listTasks` for status changes
 
 **Bad**
+
 ```
 loop {
   listTasks({state: [3]})    // wait for RESULT
@@ -226,6 +242,7 @@ loop {
 ### D1 — `switchCompany` in parallel sessions
 
 **Bad**
+
 ```
 // Two MCP sessions for the same user, both servicing different companies.
 // Each calls switchCompany at the start.
@@ -243,6 +260,7 @@ session A: listTasks()   // gets company 17's tasks if B's switch landed last
 ### D2 — Aggregating across companies without iterating
 
 **Bad**
+
 ```
 // User: "show me all my open tasks across all companies".
 listTasks({state: [1, 2, 3]})
@@ -252,6 +270,7 @@ listTasks({state: [1, 2, 3]})
 **Why** — there is no cross-company endpoint. Every list/aggregate is scoped to the active company.
 
 **Good**
+
 ```
 companies = listCompanies()
 for c in companies:
@@ -267,6 +286,7 @@ aggregate client-side.
 ### E0 — `createTask` without balance pre-check (silent DRAFT downgrade)
 
 **Bad**
+
 ```
 createTask({title, description, workerId, ...})
 // Agent reports: "task created, the freelancer will see it"
@@ -288,6 +308,7 @@ createTask({title, description, workerId, ...})
 ### E1 — `acceptTask` without balance pre-check
 
 **Bad**
+
 ```
 // Under "hold on accept" company config.
 acceptTask({uuid})
@@ -303,6 +324,7 @@ acceptTask({uuid})
 ### E2 — `payForTask` without balance pre-check
 
 **Bad**
+
 ```
 payForTask({uuid})
 // 400 if balance is short — task stays in FOR_PAYMENT.
@@ -317,6 +339,7 @@ payForTask({uuid})
 ### E3 — Forgetting `payForTask` after `acceptTask`
 
 **Bad**
+
 ```
 acceptTask({uuid})
 // Agent reports "paid!" to the user.
@@ -331,6 +354,7 @@ acceptTask({uuid})
 ### E4 — Multi-currency: assuming the rate is fresh at pay time
 
 **Bad**
+
 ```
 calculateTotalCost(...)    // (now removed from MCP, but conceptually)
 // or: read getExchangeRate
@@ -349,6 +373,7 @@ createTask(...)            // user thinks the rate they saw still applies
 ### F1 — Silent illogical status transitions
 
 **Bad**
+
 ```
 // User clicks "shortlist" on an already-rejected application.
 scout_changeApplicationStatus({applicationId, status: 'short_list'})
@@ -364,6 +389,7 @@ scout_changeApplicationStatus({applicationId, status: 'short_list'})
 ### F2 — Sharing a closed or un-moderated position
 
 **Bad**
+
 ```
 scout_sharePosition({positionId, shareTarget: 'linkedin'})
 // Position is CLOSED. Backend posts the share anyway.
@@ -378,6 +404,7 @@ scout_sharePosition({positionId, shareTarget: 'linkedin'})
 ### F3 — `scout_deletePoolFreelancersBatch` without confirming size
 
 **Bad**
+
 ```
 // User says "clean up the pool".
 scout_deletePoolFreelancersBatch({ids: [...allPoolIds]})
@@ -392,6 +419,7 @@ scout_deletePoolFreelancersBatch({ids: [...allPoolIds]})
 ### F4 — Confusing `scout_inviteApplicant` with engagement
 
 **Bad**
+
 ```
 scout_inviteApplicant({applicationId})
 // Agent says "they're now in your team".
@@ -406,6 +434,7 @@ scout_inviteApplicant({applicationId})
 ### F5 — Looking for `accepted` status on an application
 
 **Bad**
+
 ```
 scout_changeApplicationStatus({applicationId, status: 'accepted'})
 // Zod rejects: 'accepted' is not in the enum.
@@ -420,6 +449,7 @@ scout_changeApplicationStatus({applicationId, status: 'accepted'})
 ### F6 — Forgetting `poolId` when adding pool freelancers
 
 **Bad**
+
 ```
 scout_createPoolFreelancer({firstName, lastName, email, ...})
 // Zod rejects: poolId required.
@@ -428,6 +458,7 @@ scout_createPoolFreelancer({firstName, lastName, email, ...})
 **Why** — the company's pool has its own UUID. Pool tools require it.
 
 **Good**
+
 ```
 pool = scout_getPool()
 scout_createPoolFreelancer({poolId: pool.id, ...})
@@ -440,6 +471,7 @@ scout_createPoolFreelancer({poolId: pool.id, ...})
 ### G1 — Hunting for a non-existent bulk endpoint
 
 **Bad**
+
 ```
 // Agent searches the schema or guesses tool names like
 // `bulkInviteFreelancers`, `tasksImport`, `bulkCreateTasks`.
@@ -454,6 +486,7 @@ scout_createPoolFreelancer({poolId: pool.id, ...})
 ### G2 — Treating bulk operations as atomic
 
 **Bad**
+
 ```
 // All 100 invites/tasks succeed-or-fail together in one transaction.
 // Agent rolls back state on partial failure.
@@ -468,6 +501,7 @@ scout_createPoolFreelancer({poolId: pool.id, ...})
 ### G3 — Reusing `externalId` without checking
 
 **Bad**
+
 ```
 // Retrying after a crash.
 for row in failed_rows:
@@ -478,6 +512,7 @@ for row in failed_rows:
 **Why** — `externalId` is unique per `(companyId, externalId)`. Naive retry hits collisions.
 
 **Good**
+
 ```
 existing = listTasks({externalId: row.externalId})
 if existing.length > 0:
@@ -491,6 +526,7 @@ else:
 ### G4 — No pacing on bulk loops
 
 **Bad**
+
 ```
 for row in 500 rows:
   createTask(row)    // back-to-back
@@ -507,6 +543,7 @@ for row in 500 rows:
 ### H1 — Branching on the `message` field
 
 **Bad**
+
 ```
 if response.error.message.contains("insufficient"):
   ...
@@ -521,6 +558,7 @@ if response.error.message.contains("insufficient"):
 ### H2 — Branching on HTTP status alone
 
 **Bad**
+
 ```
 if status === 409:  // assume conflict
 if status === 422:  // assume validation
@@ -536,6 +574,7 @@ if status === 400:  // assume "client error" generic
 ### H3 — Not surfacing `X-Trace-Id`
 
 **Bad**
+
 ```
 catch (err) { tellUser("Something went wrong.") }
 ```
@@ -551,6 +590,7 @@ catch (err) { tellUser("Something went wrong.") }
 ### I1 — Assuming `getTaskAttributes(categoryId)` filters server-side
 
 **Bad**
+
 ```
 attrs = getTaskAttributes({categoryId: 42})
 // Agent uses the response as if it's already category-scoped.
@@ -565,6 +605,7 @@ attrs = getTaskAttributes({categoryId: 42})
 ### I2 — Mixing up `findFreelancerByEmail` semantics
 
 **Bad**
+
 ```
 result = findFreelancerByEmail(email)
 // throws on 404 → agent thinks the API is broken
@@ -579,6 +620,7 @@ result = findFreelancerByEmail(email)
 ### I3 — Numeric `taskId` vs string UUID confusion
 
 **Bad**
+
 ```
 // Agent has only the UUID from a recent createTask.
 getTaskMessages({taskId: 123})    // wrong — that's a stale numeric ID
@@ -595,6 +637,7 @@ getTaskMessages({taskId: 123})    // wrong — that's a stale numeric ID
 ### J1 — Mutating without explicit user confirmation
 
 **Bad**
+
 ```
 // User: "look at task 5".
 // Agent reads it, decides it's done, calls acceptTask.
@@ -609,6 +652,7 @@ getTaskMessages({taskId: 123})    // wrong — that's a stale numeric ID
 ### J2 — `removeFreelancer` without surfacing the backend block
 
 **Bad**
+
 ```
 removeFreelancer({freelancerId: X})
 // HTTP 422 "Worker have not finished tasks" — agent surfaces a generic "removal failed" to the user
@@ -618,6 +662,7 @@ removeFreelancer({freelancerId: X})
 **Why** — backend blocks the delete with HTTP 422 if any task is in a non-terminal state in this company. The error message ("Worker have not finished tasks") is correct but doesn't list which tasks. The agent should pre-check so it can show the user a concrete list and let them resolve those tasks first.
 
 **Good**
+
 ```
 open = listTasks({workerId: X, state: [1, 2, 3, 4, 11, 13, 14, 16]})
 if open.length > 0:
@@ -631,6 +676,7 @@ else:
 ### J3 — Inventing values when data is incomplete
 
 **Bad**
+
 ```
 // User: "invite Anna".
 inviteFreelancer({email: "anna@example.com", firstName: "Anna", lastName: "Doe"})
@@ -648,6 +694,7 @@ inviteFreelancer({email: "anna@example.com", firstName: "Anna", lastName: "Doe"}
 ### K1 — Calling tools that no longer exist (or shouldn't)
 
 **Bad**
+
 ```
 calculateTotalCost(...)        // removed from MCP scope
 quickPayTask(...)              // removed
@@ -665,6 +712,7 @@ changeTaxationStatus(...)      // removed
 ### K2 — Looking for editTask / shortenDeadline / cancelDraft
 
 **Bad**
+
 ```
 // Hunting for a generic "edit task" tool.
 ```
