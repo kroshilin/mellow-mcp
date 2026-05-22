@@ -158,6 +158,22 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
     },
     { title: "Create task" },
     async (params) => {
+      // Defensive check for known-removed fields. MCP SDK's tool() takes a
+      // ZodRawShape and wraps it in z.object() with default strip semantics,
+      // so unknown keys are silently dropped — that masks agent migration
+      // bugs (e.g. agent passes legacy `createType:'draft'` and gets a
+      // silently-ignored no-op). Reject explicitly with the rename hint.
+      const REMOVED_FIELDS: Record<string, string> = {
+        createType:
+          "removed — DRAFT vs NEW is now governed by company balance (silent DRAFT on insufficient funds); do not pass this field.",
+        acceptanceFileTemplateIds: "renamed → use `acceptanceFileIds` instead.",
+      };
+      for (const [field, hint] of Object.entries(REMOVED_FIELDS)) {
+        if (field in (params as Record<string, unknown>)) {
+          throw new Error(`createTask: field '${field}' is no longer accepted — ${hint}`);
+        }
+      }
+
       // Normalize title to keep within the backend's special-char whitelist:
       // em/en-dash → hyphen, curly quotes → straight, NBSP/narrow-NBSP → regular space.
       // Curly singles and backticks are stripped (apostrophes are not on the whitelist).
@@ -193,18 +209,23 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
 
   server.tool(
     "getAllowedCurrencies",
-    "Get allowed currencies for multicurrency tasks for the active company.",
+    "Get allowed currencies for multicurrency tasks for the active company. companyId is optional — if omitted, MCP defaults to the session's active company. Backend requires an explicit query param (ignores X-Company-Id on this endpoint); omitting both used to 400 before this default was added.",
     {
       companyId: z
         .number()
         .optional()
-        .describe("Company ID. Optional — defaults to the active company context (X-Company-Id header or user default)."),
+        .describe("Company ID. Optional — defaults to the session's active company (MCP-side, before sending)."),
     },
     { title: "Get allowed currencies", readOnlyHint: true },
     async ({ companyId }) => {
-      const query: Record<string, string | undefined> = {};
-      if (companyId !== undefined) query.companyId = companyId.toString();
-      const result = await client.get<unknown>("/customer/tasks/allowed-currencies", query);
+      // This endpoint ignores X-Company-Id and demands an explicit companyId query param.
+      // Default from the session's active company so single-company users don't need to
+      // pass it on every call.
+      const effectiveCompanyId = companyId ?? client.activeCompanyId;
+      if (effectiveCompanyId === undefined) {
+        throw new Error("getAllowedCurrencies: companyId is required (no active company on session). Pass companyId explicitly.");
+      }
+      const result = await client.get<unknown>("/customer/tasks/allowed-currencies", { companyId: effectiveCompanyId.toString() });
       return {
         structuredContent: asStructuredList(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
@@ -235,7 +256,7 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
 
   server.tool(
     "changeDeadline",
-    "Extend a task's deadline. Only legal when the task is in WAITING_FOR_CUSTOMER_DEADLINE_DECISION (14), the previous active state was NEW or IN_WORK, and the new deadline is in the future. Otherwise HTTP 400. Shortening is not supported.",
+    "Extend a task's deadline. Only legal when the task is in WAITING_FOR_CUSTOMER_DEADLINE_DECISION (14), the previous active state was NEW or IN_WORK, and the new deadline is in the future. Wrong state → HTTP 422 'Can not process task with current state'. Shortening is not supported.",
     {
       taskId: z.number().optional().describe("Task ID. Provide this OR uuid."),
       uuid: z.string().optional().describe("Task UUID. Provide this OR taskId."),
@@ -366,17 +387,30 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
 
   server.tool(
     "addTaskMessage",
-    "Send a chat message into a task's thread. Required: taskId (numeric) and message (non-empty string). Returns 200 with empty body. Caller must have task-view permission for the task; 403 otherwise. Sender id is taken from the JWT, not from the body. No state guard — message goes through in any state.",
+    "Send a chat message into a task's thread. Pass either taskId (numeric) or uuid — when only uuid is given, MCP transparently looks up the numeric taskId via getTask first (the underlying endpoint POST /api/tasks/messages accepts only taskId, unlike other write tools). Returns 200 with empty body. Caller must have task-view permission for the task; 403 otherwise. Sender id is taken from the JWT, not from the body. No state guard — message goes through in any state.",
     {
-      taskId: z.number().optional().describe("Task ID. Provide this OR uuid."),
-      uuid: z.string().optional().describe("Task UUID. Provide this OR taskId."),
+      taskId: z.number().optional().describe("Task ID (numeric). Provide this OR uuid."),
+      uuid: z.string().optional().describe("Task UUID. Provide this OR taskId — MCP will resolve to numeric id before sending."),
       message: z.string().describe("Message text (recommend ≤ 5000 chars)"),
     },
     { title: "Add task message" },
     async (params) => {
       // Endpoint is /api/tasks/messages (NOT /api/customer/tasks/messages — that path
       // is method-mismatched with PUT /api/customer/tasks/{taskIdentifier} and produces 500).
-      const result = await client.post<unknown>("/tasks/messages", params);
+      // The endpoint accepts only numeric taskId; uuid → 422 "taskId blank". When only
+      // uuid is supplied, resolve to taskId via getTask first.
+      let taskId = params.taskId;
+      if (taskId === undefined && params.uuid !== undefined) {
+        const task = (await client.get<{ id?: number }>(`/customer/tasks/${params.uuid}`)) ?? {};
+        if (typeof task.id !== "number") {
+          throw new Error(`addTaskMessage: could not resolve uuid '${params.uuid}' to numeric taskId`);
+        }
+        taskId = task.id;
+      }
+      if (taskId === undefined) {
+        throw new Error("addTaskMessage: either taskId or uuid is required");
+      }
+      const result = await client.post<unknown>("/tasks/messages", { taskId, message: params.message });
       return {
         structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],

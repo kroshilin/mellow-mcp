@@ -3,13 +3,19 @@ import { z } from "zod";
 import { asStructuredObject, type MellowClient } from "../mellow-client";
 
 export function registerWebhookTools(server: McpServer, client: MellowClient) {
-  server.tool("getWebhook", "Get the current webhook configuration.", {}, { title: "Get webhook", readOnlyHint: true }, async () => {
-    const result = await client.get<unknown>("/customer/web-hook");
-    return {
-      structuredContent: asStructuredObject(result),
-      content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
-    };
-  });
+  server.tool(
+    "getWebhook",
+    "Get the current webhook configuration. Backend returns HTTP 404 with empty body when no webhook has been configured for the active company — this is the expected 'no webhook yet' signal, not a real error. After createOrUpdateWebhook this returns the saved config.",
+    {},
+    { title: "Get webhook", readOnlyHint: true },
+    async () => {
+      const result = await client.get<unknown>("/customer/web-hook");
+      return {
+        structuredContent: asStructuredObject(result),
+        content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
+      };
+    },
+  );
 
   server.tool(
     "createOrUpdateWebhook",
