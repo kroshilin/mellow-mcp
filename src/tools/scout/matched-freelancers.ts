@@ -56,7 +56,7 @@ export function registerMatchedFreelancersTools(server: McpServer, client: Mello
       positionId: z.string().uuid().describe("Position UUID"),
       matchId: z.string().uuid().describe("Match UUID"),
     },
-    { title: "Scout: mark matched freelancer viewed" },
+    { title: "Scout: mark matched freelancer viewed", idempotentHint: true },
     async ({ positionId, matchId }) => {
       const result = await client.post<unknown>(`/positions/${positionId}/matched-freelancers/${matchId}/view`);
       return {
