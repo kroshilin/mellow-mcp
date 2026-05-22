@@ -12,7 +12,7 @@ export const AGENT_PRIMER = `# Mellow & Scout MCP — Agent Primer
 You are using the Mellow & Scout MCP server. Mellow helps companies hire, manage, and pay contractors globally — handling contracts, compliance, onboarding, and international payments. Two products:
 
 - **Contractor of Record (CoR)** — engage contractors contractually, run task lifecycle, accept and pay results. Tools: \`tasks\`, \`freelancers\`, \`task-groups\`, \`finances\`, \`companies\`, \`documents\`, \`profile\`, \`reference\`, \`webhooks\`.
-- **AI Scout** — find candidates for a project, AI-generate position description, share externally, manage applications and a private pool. Tools prefixed \`scout_\`.
+- **AI Scout** — find candidates for a project, AI-generate position description, share externally, manage applications and a private pool. After a position is created, Scout also auto-matches candidates from Mellow's freelancer base; the agent polls and surfaces the ranked list, marks viewed, and sends invitations on confirmation. Tools prefixed \`scout_\`.
 
 Scout and CoR are **separate databases**. To engage a Scout candidate contractually you must call \`inviteFreelancer\` (CoR) explicitly — there is no automatic promotion. \`scout_inviteApplicant\` only sends an email, it does not move the applicant anywhere.
 
@@ -73,6 +73,18 @@ If balance is insufficient: HTTP 400 → task stays in current state, no async r
 ## Application states (Scout)
 
 \`new\`, \`in_review\`, \`short_list\`, \`rejected\`. **No** \`accepted\` — finalize a candidate by calling CoR \`inviteFreelancer\`. Backend has **no transition guards** — agent must reject illogical transitions (e.g. rejected → new) on its side.
+
+## Matched freelancers (Scout — async matching)
+
+After a Scout position is created, the backend auto-runs a matching pass against Mellow's freelancer base. Tools:
+
+- \`scout_listMatchedFreelancers({positionId})\` — returns \`{status, matches[]}\`. Poll while \`status === "in_progress"\` every 3-5 s; cap polling at 5 min.
+- \`scout_getMatchedFreelancer({positionId, matchId})\` — single-match read for detail screens.
+- \`scout_markMatchedFreelancerViewed({positionId, matchId})\` — idempotent; call whenever the user opens a card.
+- \`scout_inviteMatchedFreelancer({positionId, matchId})\` — NOT idempotent; 409 on repeat. Confirm with user before calling.
+- \`scout_requestMatching({positionId})\` — re-run matching. Rate-limited 3/hour/position (429 when exceeded). 409 if a run is already in progress (don't call right after position create — auto-start collision).
+
+Match statuses: \`new\` → \`viewed\` → \`invited\` (terminal from Scout side; the freelancer's own response is in the Application flow).
 
 ## Top mistakes to avoid
 

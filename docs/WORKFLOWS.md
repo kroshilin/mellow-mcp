@@ -13,6 +13,7 @@
 **User goal:** "I want to start working with a new contractor. Onboard them and assign their first task."
 
 **Preconditions:**
+
 - Customer is logged in to MCP.
 - Customer knows the freelancer's email at minimum (other personal fields are nice-to-have).
 - Customer has clarified what the task is — title, description, price, deadline, category.
@@ -46,6 +47,7 @@
 10. **Accept and pay** — see Recipe 3.
 
 **Error handling:**
+
 - `inviteFreelancer` returns HTTP 422 "already in team" — they're already active in this company. Skip to step 3.
 - `inviteFreelancer` returns HTTP 423 — concurrent invite on the same email (short backend lock). Retry after a short pause.
 - `findFreelancerByEmail` may return HTTP 422 for emails containing `+` aliasing. Workaround: skip the existence check and call `inviteFreelancer` directly — it will return HTTP 422 "already in team" if duplicate.
@@ -61,6 +63,7 @@
 **User goal:** "I need a designer for a project. Help me find one and start working with them."
 
 **Preconditions:**
+
 - Customer is logged in.
 - Customer has a brief — what they need, ideal candidate profile, budget.
 
@@ -103,6 +106,7 @@
    - This **does not** auto-reject the remaining applications — they stay as-is. Agent should iterate and `scout_changeApplicationStatus(rejected)` for any still in `new` / `in_review` if the user wants a clean slate.
 
 **Error handling:**
+
 - AI generation polling never returns ready → fall back to `scout_createPosition` with user-provided text.
 - `scout_inviteApplicant` returns 409 → already invited, no-op for the user.
 - Step 6 fails because the candidate's email is already an active customer in another company → tell the user, this is an edge case requiring support.
@@ -116,6 +120,7 @@
 **User goal:** "The freelancer submitted the work. Accept and pay them."
 
 **Preconditions:**
+
 - Task exists, was assigned to a known freelancer.
 - Task is in state `3 RESULT` (or one of the special states `11 WAITING_DECLINE_BY_WORKER`, `14 WAITING_FOR_CUSTOMER_DEADLINE_DECISION` that `acceptTask` also handles).
 
@@ -137,6 +142,7 @@
 6. The system finishes the task asynchronously. Poll `getTask(uuid)` until `state == 5 FINISHED` (or back to `4 FOR_PAYMENT` on error). Typically seconds to minutes.
 
 **Error handling:**
+
 - `acceptTask` 400 with insufficient-funds reason — task stays in `RESULT`. Pre-check balance, top up, retry. Or use a different hold policy company-wide (out of MCP).
 - `acceptTask` 400 with "open changeset / dispute / unsigned agreement" — surface to the user; resolution is out of MCP scope.
 - `payForTask` 400 with insufficient-funds — same as above.
@@ -151,6 +157,7 @@
 **User goal:** "The submission isn't quite right. Send it back for changes."
 
 **Preconditions:**
+
 - Task in state `3 RESULT`.
 
 **Steps:**
@@ -163,6 +170,7 @@
 5. Run **Recipe 3** to accept and pay.
 
 **Error handling:**
+
 - `resumeTask` 400 — task isn't in `RESULT`. Re-read the state and explain to the user.
 - The task hits the soft deadline before the freelancer resubmits → see Recipe 6.
 
@@ -175,6 +183,7 @@
 **User goal:** "The freelancer can't do this task. Confirm their decline so we both walk away cleanly."
 
 **Preconditions:**
+
 - The freelancer has already requested to decline on their side. The task is in state `11 WAITING_DECLINE_BY_WORKER`.
 
 **Steps:**
@@ -185,6 +194,7 @@
    `declineTask({taskId})` (or equivalently `changeTaskStatus({taskId, state: 8})`) → state moves to `8 DECLINED_BY_CUSTOMER`. Any held funds are released automatically.
 
 **Error handling:**
+
 - Customer wants to cancel a task that is in `1 NEW` or `2 IN_WORK`, not `11`. There is **no direct customer-side cancel** for these states. Tell the user the only paths are:
   (a) ask the freelancer to start a decline → then run this recipe, or
   (b) open a dispute (not via this MCP).
@@ -199,6 +209,7 @@
 **User goal:** "The task ran past its deadline. The system is asking me to decide."
 
 **Preconditions:**
+
 - Task is in state `14 WAITING_FOR_CUSTOMER_DEADLINE_DECISION`.
 - The previous active state (before the deadline trigger) was `1 NEW` or `2 IN_WORK`.
 
@@ -214,6 +225,7 @@
 4. If the user picks let it close: do nothing. The system will close the task automatically when its timer expires.
 
 **Error handling:**
+
 - `changeDeadline` 400 — reasons include the new deadline being in the past, or the previous active state not being `NEW`/`IN_WORK`. Re-ask the user for a future deadline.
 
 **Done when:** task is back in an active state (`1`/`2`) or has been auto-closed to `15 DECLINED_BY_DEADLINE`.
@@ -225,6 +237,7 @@
 **User goal:** "I have a USD balance but want to pay this task in EUR."
 
 **Preconditions:**
+
 - Customer is logged in.
 - Company balance currency is known (one per company; from `getCompanyBalance`).
 - Worker / category are decided.
@@ -241,6 +254,7 @@
 7. Continue: draft → publish → freelancer accepts → submits → **Recipe 3** for accept + pay.
 
 **Error handling:**
+
 - `createTask` 400 with currency violation — the chosen `workerCurrency` isn't in the company's allowed list. Re-check with `getAllowedCurrencies`.
 - At `payForTask` time: hold/debit happens in the **company's balance currency** (USD), converted from the task currency (EUR) at the locked rate. If `available` (in USD) is below the converted amount, payment fails. Top up.
 
@@ -255,6 +269,7 @@
 **User goal:** "Give me my invoices and acts for Q1."
 
 **Preconditions:**
+
 - Customer is logged in.
 - Period is defined (start, end).
 
@@ -268,6 +283,7 @@
    - Tell the user: "Preparing the archive — you'll receive it shortly."
 
 **Error handling:**
+
 - Empty list → tell the user no documents in that period; check the date range.
 - 403 → user's role can't list documents. Surface as-is; do not parse `required_role` from the response.
 
@@ -280,6 +296,7 @@
 **User goal:** "Show me a single dashboard of tasks/balance across all my companies."
 
 **Preconditions:**
+
 - Customer's account has more than one company.
 
 **Steps:**
@@ -293,6 +310,7 @@
 4. Aggregate client-side, present to the user.
 
 **Error handling:**
+
 - 403 on a specific company — user lost access to that company. Skip and tell the user.
 - A parallel agent session causes the active company to drift mid-loop (race) — the data may be wrong. Fix is to send `X-Company-Id` per request once that's wired up.
 
@@ -305,6 +323,7 @@
 **User goal:** "I tried to assign a task and the freelancer says they can't accept it. Why?"
 
 **Preconditions:**
+
 - Task is `1 NEW` (assigned but not accepted).
 - The freelancer told the user something is blocking them.
 
@@ -323,16 +342,18 @@
 
    **Data payload shapes** (each requirement carries different `data`):
 
-   | name | `data` shape |
-   |---|---|
-   | `agreementRequired` | `{url, templateUuid, seller, code, reason}` (HTML in `reason` — use `url` to surface to the freelancer) |
-   | `profileNotCompleted` | `string[]` — list of missing field names (e.g. `["country","phone","city"]`) |
-   | `taxInfoRequired` | `string[]` — often empty |
-   | `verification` / `ageRestriction` / `withdrawFundsRequired` / `correctiveDocument` / `acceptanceFiles` | shape not yet observed in test data — handle defensively |
+   | name                                                                                                   | `data` shape                                                                                            |
+   | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+   | `agreementRequired`                                                                                    | `{url, templateUuid, seller, code, reason}` (HTML in `reason` — use `url` to surface to the freelancer) |
+   | `profileNotCompleted`                                                                                  | `string[]` — list of missing field names (e.g. `["country","phone","city"]`)                            |
+   | `taxInfoRequired`                                                                                      | `string[]` — often empty                                                                                |
+   | `verification` / `ageRestriction` / `withdrawFundsRequired` / `correctiveDocument` / `acceptanceFiles` | shape not yet observed in test data — handle defensively                                                |
+
 3. Tell the user **which side fixes what** — none of these are fixable from this MCP. The freelancer fixes the freelancer items; support fixes the support items.
 4. Periodically re-run `checkTaskRequirements` until the list is empty.
 
 **Error handling:**
+
 - The list is empty but the freelancer still can't accept — there's a state-machine reason instead. `getTask(uuid)` and check `state`. If it's already terminal (`5 FINISHED`, `6/8/15 DECLINED_*`), tell the user.
 - The list never empties — escalate to support, share the freelancer ID and `X-Trace-Id`.
 
@@ -345,6 +366,7 @@
 **User goal:** "Here's a list of contractors — invite them all at once."
 
 **Preconditions:**
+
 - Customer is logged in.
 - User provides a file with the freelancer list. The agent must accept multiple formats: **CSV, TSV, XLSX, JSON** (and gracefully ask to convert if it's something else like PDF or a screenshot).
 - File contains at minimum an `email` column. Optional columns: `firstName`, `lastName`, `phone`, `specialization`, `inEnglish`, `note`.
@@ -352,9 +374,11 @@
 **Steps:**
 
 1. **Parse the file** (agent-side, on the client). Normalize column names (trim, lowercase, strip diacritics). Output a list of records:
+
    ```
    [{rowNumber, email, firstName?, lastName?, phone?, specialization?, inEnglish?, note?}, ...]
    ```
+
    - If the file format is unsupported or parsing fails, tell the user the supported formats and ask for a re-export.
 
 2. **Validate each row** locally:
@@ -374,9 +398,11 @@
    - `new` — not seen anywhere yet. Standard invite.
 
 5. **Process invites row by row.** For each entry in `existing_in_other_company` and `new`:
+
    ```
    inviteFreelancer({email, firstName?, lastName?, phone?, specialization?: number, inEnglish?, sendEmail: true})
    ```
+
    Note: `specialization` is a numeric ID, not a string. If the user's file has free-form text, resolve it via `getSpecializations()` before invite (mark unresolved as `needs_specialization_match` and ask the user, or omit the field).
    - On success: record `{rowNumber, email, freelancerId, status: 'invited'}`.
    - On 400 "already in team": record `{... status: 'skipped_already_active'}`.
@@ -404,26 +430,27 @@
 **User goal:** "Here's a spreadsheet of tasks I want to assign — create them all."
 
 **Preconditions:**
+
 - Customer is logged in.
 - Companies and freelancers already exist (or are about to be created via Recipe 11 — chain if needed).
 - User provides a file with the task list in CSV / TSV / XLSX / JSON.
 
 **Expected columns** (case-insensitive, agent normalizes):
 
-| Column | Required | Notes |
-|---|---|---|
-| `title` | yes | Task title |
-| `description` | yes | Plain text |
-| `workerEmail` or `workerId` | yes | Email is more user-friendly; agent resolves to `workerId` |
-| `categoryId` or `categoryName` | yes | If `categoryName`, agent resolves via `getServices()` |
-| `price` | yes | Number; minor units NOT used here (pass major units as the user wrote them) |
-| `deadline` | yes | ISO-8601 with timezone preferred; agent reformats if needed |
-| `workerCurrency` | optional | ISO string (USD/EUR/...). Defaults to company currency if absent. |
-| `attribute1Id`, `attribute1Value`, ..., `attributeNId`, `attributeNValue` | yes (3+ rows of these per task) | Agent stitches them into `[{id, value}]`. Mandatory count depends on the category. Use `getTaskAttributes()` once and filter by `categoryId` client-side. |
-| `externalId` | optional but recommended | Stable client-side ID for idempotency |
-| `taskGroupId` | optional | If grouping into a project. Pass to `createTask` as `editGroup: [taskGroupId]` (legacy plural; single-element array). Resolve task group IDs via `listTaskGroups`/`createTaskGroup` first. |
-| `copyright`, `needReport` | optional booleans | Defaults: false |
-| `shareCommission` | optional | Default: false |
+| Column                                                                    | Required                        | Notes                                                                                                                                                                                      |
+| ------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `title`                                                                   | yes                             | Task title                                                                                                                                                                                 |
+| `description`                                                             | yes                             | Plain text                                                                                                                                                                                 |
+| `workerEmail` or `workerId`                                               | yes                             | Email is more user-friendly; agent resolves to `workerId`                                                                                                                                  |
+| `categoryId` or `categoryName`                                            | yes                             | If `categoryName`, agent resolves via `getServices()`                                                                                                                                      |
+| `price`                                                                   | yes                             | Number; minor units NOT used here (pass major units as the user wrote them)                                                                                                                |
+| `deadline`                                                                | yes                             | ISO-8601 with timezone preferred; agent reformats if needed                                                                                                                                |
+| `workerCurrency`                                                          | optional                        | ISO string (USD/EUR/...). Defaults to company currency if absent.                                                                                                                          |
+| `attribute1Id`, `attribute1Value`, ..., `attributeNId`, `attributeNValue` | yes (3+ rows of these per task) | Agent stitches them into `[{id, value}]`. Mandatory count depends on the category. Use `getTaskAttributes()` once and filter by `categoryId` client-side.                                  |
+| `externalId`                                                              | optional but recommended        | Stable client-side ID for idempotency                                                                                                                                                      |
+| `taskGroupId`                                                             | optional                        | If grouping into a project. Pass to `createTask` as `editGroup: [taskGroupId]` (legacy plural; single-element array). Resolve task group IDs via `listTaskGroups`/`createTaskGroup` first. |
+| `copyright`, `needReport`                                                 | optional booleans               | Defaults: false                                                                                                                                                                            |
+| `shareCommission`                                                         | optional                        | Default: false                                                                                                                                                                             |
 
 **Steps:**
 
@@ -457,6 +484,7 @@
 6. **Generate stable `externalId` per row** if not provided. Format suggestion: `bulk-{batchId}-row{rowNumber}`. This makes retry safe.
 
 7. **Create tasks row by row** (no bulk API in MCP — agent loops):
+
    ```
    for each ready row:
      uuid = client-generated UUID v4
@@ -476,6 +504,7 @@
      // For "review before publish" bulk imports: leave company balance below the
      // batch total so all rows land in DRAFT, then publishDraftTask per row after review.
    ```
+
    - Pace at 1 request per 200–500ms (token-shared rate limits).
    - On 400 with field violations: record `{rowNumber, status: 'failed', reason: <violations>}` and continue.
    - On 5xx: retry once. Permanent fail → record.
@@ -503,6 +532,26 @@
 - **There are no bulk-import endpoints on the backend.** Confirmed by the API team. Row-by-row is the canonical path — agents should not try to find a `POST .../import` endpoint.
 
 **Done when:** the user has the per-row report and either all "Ready" rows have moved to `NEW` (or to `DRAFT` deliberately).
+
+---
+
+## Recipe 13 — Hire via AI matching (Scout)
+
+**Goal:** the user creates a position, lets Mellow surface candidates, picks one and sends an invite.
+
+**Preconditions:** Scout enabled for the company; a position already exists (this recipe starts at the matches step).
+
+**Sequence:**
+
+1. `scout_listMatchedFreelancers({positionId})` → check `status`.
+2. If `status === "in_progress"` → wait 3-5 s, retry from step 1. Cap at 5 min.
+3. If `status === "failed"` → tell the user matching errored; offer to retry via `scout_requestMatching`.
+4. If `status === "completed"` and `matches.length > 0` → render the top 5-10 by score (already sorted DESC). For each: name, expertise, country, experience, score, explanation.
+5. User opens a card → call `scout_markMatchedFreelancerViewed({positionId, matchId})` (idempotent; safe to spam).
+6. User confirms invite → call `scout_inviteMatchedFreelancer({positionId, matchId})`. If 409 `alreadyInvited` → tell the user this candidate was already invited; suggest another.
+7. If the user wants a re-run later → `scout_requestMatching({positionId})`. Handle 409 (in progress) and 429 (rate limit). After the re-run is accepted → back to step 1.
+
+**Done when:** the user either invites a candidate (success), exhausts matches (offer to widen the position), or matching failed (retry available).
 
 ---
 
