@@ -47,7 +47,7 @@ export function registerScoutPositionTools(server: McpServer, client: MellowClie
 
   server.tool(
     "scout_createPosition",
-    "Create a new hiring position",
+    "Create a hiring position. IMPORTANT: pass `company.id` from a prior `scout_listCompanies` result whenever possible — the backend does NOT dedupe by (name, website), so omitting `company.id` silently creates a new duplicate company every call. Call `scout_listCompanies` first; if your company is in the list, pass its uuid as `company.id`. WARNING: the combination `projectType: 'one-time'` + `workload: 'one_two_weeks'` currently returns HTTP 500 (backend bug filed); until that is fixed, fall back to `projectType: 'ongoing'` with an appropriate weekly-hours `workload` value. Returns the new position object including the assigned uuid, status (`active`), and `short_link`.",
     {
       title: z.string().describe("Position title"),
       summary: z.string().optional().describe("Short summary of the position"),
@@ -194,7 +194,9 @@ export function registerScoutPositionTools(server: McpServer, client: MellowClie
     },
     { title: "Scout: share position", openWorldHint: true },
     async ({ positionId, shareTarget }) => {
-      const result = await client.post<unknown>(`/positions/${positionId}/share`, { shareTarget });
+      // Backend expects snake_case `share_target` in the body — 422s on
+      // `shareTarget`. Keep the camelCase param on the agent surface.
+      const result = await client.post<unknown>(`/positions/${positionId}/share`, { share_target: shareTarget });
       return {
         structuredContent: asStructuredObject(result),
         content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
