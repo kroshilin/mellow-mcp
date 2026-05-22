@@ -27,6 +27,7 @@ import { registerScoutLookupTools } from "./tools/scout/lookup";
 import { registerScoutPoolTools } from "./tools/scout/pool";
 import { registerScoutPositionTools } from "./tools/scout/positions";
 import { registerScoutPromoPostTools } from "./tools/scout/promo-posts";
+import { registerMatchedFreelancersTools } from "./tools/scout/matched-freelancers";
 import { registerF2bClientTools } from "./tools/f2b/clients";
 import { registerF2bInvoiceTools } from "./tools/f2b/invoices";
 import { refreshUpstreamToken, type Props } from "./utils";
@@ -78,6 +79,7 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
         registerScoutAttachmentTools(this.server, scoutClient);
         registerScoutCompanyTools(this.server, scoutClient);
         registerScoutLookupTools(this.server, scoutClient);
+        registerMatchedFreelancersTools(this.server, scoutClient);
       }
 
       if (userRole === "freelancer") {
