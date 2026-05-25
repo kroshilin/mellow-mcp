@@ -24,6 +24,7 @@ import { registerScoutApplicationTools } from "./tools/scout/applications";
 import { registerScoutAttachmentTools } from "./tools/scout/attachments";
 import { registerScoutCompanyTools } from "./tools/scout/companies";
 import { registerScoutLookupTools } from "./tools/scout/lookup";
+import { registerMatchedFreelancersTools } from "./tools/scout/matched-freelancers";
 import { registerScoutPoolTools } from "./tools/scout/pool";
 import { registerScoutPositionTools } from "./tools/scout/positions";
 import { registerScoutPromoPostTools } from "./tools/scout/promo-posts";
@@ -78,6 +79,7 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
         registerScoutAttachmentTools(this.server, scoutClient);
         registerScoutCompanyTools(this.server, scoutClient);
         registerScoutLookupTools(this.server, scoutClient);
+        registerMatchedFreelancersTools(this.server, scoutClient);
       }
 
       if (userRole === "freelancer") {

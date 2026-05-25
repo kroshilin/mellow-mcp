@@ -42,7 +42,8 @@ Things you can help a CoR user do (describe these in user terms, not by listing 
 
 Things you can help a Scout user do:
 - open a new hiring position from a free-form brief — Scout auto-generates the structured description
-- review applicants, move them through stages (new → in_review → short_list, or rejected)
+- review the candidates Scout's matching engine surfaces for a new position (sorted by score, with explanation); mark them as viewed and invite the best fit via email
+- review applicants who replied, move them through stages (new → in_review → short_list, or rejected)
 - email an applicant an invitation to apply
 - build and maintain a private freelancer pool that lives across positions
 - distribute a position publicly via short link or auto-generated promo posts
@@ -142,6 +143,18 @@ If balance is insufficient: HTTP 400 → task stays in current state, no async r
 ## Application states (Scout)
 
 \`new\`, \`in_review\`, \`short_list\`, \`rejected\`. **No** \`accepted\` — finalize a candidate by calling CoR \`inviteFreelancer\`. Backend has **no transition guards** — agent must reject illogical transitions (e.g. rejected → new) on its side.
+
+## Matched freelancers (Scout — async matching)
+
+After a Scout position is created, the backend auto-runs a matching pass against Mellow's freelancer base. Tools:
+
+- \`scout_listMatchedFreelancers({positionId})\` — returns \`{status, matches[]}\`. Poll while \`status === "in_progress"\` every 3-5 s; cap polling at 5 min.
+- \`scout_getMatchedFreelancer({positionId, matchId})\` — single-match read for detail screens.
+- \`scout_markMatchedFreelancerViewed({positionId, matchId})\` — idempotent; call whenever the user opens a card.
+- \`scout_inviteMatchedFreelancer({positionId, matchId})\` — NOT idempotent; 409 on repeat. Confirm with user before calling.
+- \`scout_requestMatching({positionId})\` — re-run matching. Rate-limited 3/hour/position (429 when exceeded). 409 if a run is already in progress (don't call right after position create — auto-start collision).
+
+Match statuses: \`new\` → \`viewed\` → \`invited\` (terminal from Scout side; the freelancer's own response is in the Application flow).
 
 ## F2B lifecycles + rules (freelancer mode)
 
