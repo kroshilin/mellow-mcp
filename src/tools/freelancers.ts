@@ -34,11 +34,14 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
     },
     { title: "List freelancers", readOnlyHint: true },
     async (params) => {
+      // Backend filter expects int (1/0), not the JS-stringified "true"/"false"
+      // — without this coercion it 422s with "must be one of int, string given".
+      const bool = (v: boolean | undefined): string | undefined => (v === undefined ? undefined : v ? "1" : "0");
       const queryParams: Record<string, string | undefined> = {
         "filter[taxationStatusId]": params.taxationStatusId?.toString(),
-        "filter[isVerified]": params.isVerified?.toString(),
-        "filter[isRegistered]": params.isRegistered?.toString(),
-        "filter[isInviteEmailSent]": params.isInviteEmailSent?.toString(),
+        "filter[isVerified]": bool(params.isVerified),
+        "filter[isRegistered]": bool(params.isRegistered),
+        "filter[isInviteEmailSent]": bool(params.isInviteEmailSent),
         "filter[dateInvitedFrom]": params.dateInvitedFrom,
         "filter[dateInvitedTo]": params.dateInvitedTo,
         "filter[dateRegisteredFrom]": params.dateRegisteredFrom,
@@ -238,7 +241,7 @@ export function registerFreelancerTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "getFreelancerTaxInfo",
-    "Get tax metadata for a freelancer (5 fields: taxResidenceCountry, type/taxDocumentType, taxNumber, vatNumber, regNumber). HTTP 404 means 'no tax data filled in', not 'freelancer doesn't exist'. Only the customer of the active company can read; switch company to read for another. taxationStatusId is on the regular getFreelancer response, not here.",
+    "Get tax metadata for a freelancer (5 fields: taxResidenceCountry, type/taxDocumentType, taxNumber, vatNumber, regNumber). Backend returns 200 with all fields set to null when the freelancer has not filled in tax data — DO NOT treat null fields as the request failing. Only the customer of the active company can read; switch company to read for another. taxationStatusId is on the regular getFreelancer response, not here.",
     {
       freelancerId: z.number().describe("Freelancer ID"),
     },

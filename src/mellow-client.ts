@@ -93,5 +93,9 @@ export function createMellowClient(baseUrl: string, accessToken: string, activeC
     put: <T>(path: string, body?: object) => request<T>("PUT", path, { body }),
     patch: <T>(path: string, body?: object) => request<T>("PATCH", path, { body }),
     del: <T>(path: string, body?: object) => request<T>("DELETE", path, { body }),
+    // Exposed so tool handlers can default to the session's active company when
+    // a backend endpoint requires an explicit companyId (e.g. getAllowedCurrencies)
+    // even though we already send X-Company-Id on every request.
+    activeCompanyId,
   };
 }

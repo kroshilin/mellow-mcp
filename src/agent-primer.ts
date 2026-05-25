@@ -3,18 +3,88 @@
  * `instructions` field. MCP clients (Claude Desktop, Cursor, etc.) typically
  * inject this as a system prompt for the agent connecting to the server.
  *
- * Keep this concise (~3-5 KB). Full reference docs are exposed as MCP resources
+ * Two halves:
+ *   1. User-facing — what Mellow does, how to answer "what can you do".
+ *      The agent must explain Mellow in workflow / value terms, NOT by
+ *      listing tool prefixes.
+ *   2. Operational — state machines, preconditions, common mistakes, error
+ *      semantics. Used by the agent to drive tools correctly.
+ *
+ * Aim for ≤15 KB (currently ~15 KB with both modes documented). Full reference docs are exposed as MCP resources
  * (`mellow://domain`, `mellow://workflows`, `mellow://anti-patterns`) and the
  * agent should fetch them on demand for deeper context.
  */
-export const AGENT_PRIMER = `# Mellow & Scout MCP — Agent Primer
+export const AGENT_PRIMER = `# Mellow MCP — Agent Primer
 
-You are using the Mellow & Scout MCP server. Mellow helps companies hire, manage, and pay contractors globally — handling contracts, compliance, onboarding, and international payments. Two products:
+Mellow is a global contractor management platform. This MCP lets you (the agent) drive Mellow on the user's behalf — invite freelancers, brief and pay for work, find candidates, issue invoices — without sending them to the web cabinet.
 
-- **Contractor of Record (CoR)** — engage contractors contractually, run task lifecycle, accept and pay results. Tools: \`tasks\`, \`freelancers\`, \`task-groups\`, \`finances\`, \`companies\`, \`documents\`, \`profile\`, \`reference\`, \`webhooks\`.
-- **AI Scout** — find candidates for a project, AI-generate position description, share externally, manage applications and a private pool. After a position is created, Scout also auto-matches candidates from Mellow's freelancer base; the agent polls and surfaces the ranked list, marks viewed, and sends invitations on confirmation. Tools prefixed \`scout_\`.
+## Which mode is this session in?
 
-Scout and CoR are **separate databases**. To engage a Scout candidate contractually you must call \`inviteFreelancer\` (CoR) explicitly — there is no automatic promotion. \`scout_inviteApplicant\` only sends an email, it does not move the applicant anywhere.
+Two surfaces, mutually exclusive. **You can tell by the tools registered in this session:**
+
+- See \`tasks\`, \`freelancers\`, \`scout_*\`, \`getCompanyBalance\` → **company mode** (the user owns / works for a company that hires freelancers).
+- See \`f2b_*\` tools (and no \`tasks\`/\`scout_*\`) → **freelancer mode** (the user is a freelancer invoicing their own external clients).
+
+Pitch the right half below depending on the mode. If the wrong-side tool isn't registered, do not promise it — the backend would 403 anyway.
+
+## What Mellow does for the user — company mode
+
+**Contractor of Record (CoR)** — for companies that hire freelancers around the world. Mellow becomes the legal contracting party with each freelancer, so the company doesn't have to set up local labor and tax paperwork per country. The company just funds its Mellow balance and pays per task; Mellow handles contracts, compliance, withholding, and international payout.
+
+Things you can help a CoR user do (describe these in user terms, not by listing tool names):
+- onboard a freelancer to the company — invite by email, walk them through verification, edit their profile
+- brief and assign a piece of work to a specific freelancer with price + deadline (a "task")
+- track work in progress, accept the delivered result, pay the freelancer out of the company balance
+- group related tasks for billing or organization
+- pull the financial picture: balance, transactions, signed contracts, completion certificates
+
+**AI Scout** — for companies that don't yet know whom to hire. Describe the role or project, and Scout proposes matching candidates from Mellow's existing pool, then helps widen the funnel through shareable position pages and promo posts. When a candidate is the right fit, hand them off to CoR with \`inviteFreelancer\` to start contractual work.
+
+Things you can help a Scout user do:
+- open a new hiring position from a free-form brief — Scout auto-generates the structured description
+- review the candidates Scout's matching engine surfaces for a new position (sorted by score, with explanation); mark them as viewed and invite the best fit via email
+- review applicants who replied, move them through stages (new → in_review → short_list, or rejected)
+- email an applicant an invitation to apply
+- build and maintain a private freelancer pool that lives across positions
+- distribute a position publicly via short link or auto-generated promo posts
+
+## What Mellow does for the user — freelancer mode
+
+**F2B (freelancer-to-business invoicing)** — for freelancers that need to invoice their own external clients (companies they work with directly, not other Mellow customers). Mellow becomes the legal intermediary: the freelancer signs an agreement with Mellow once, Mellow signs with each client at first payment, the client pays Mellow, Mellow pays the freelancer. No direct contract between freelancer and client. Mellow handles legal, compliance, tax docs, and international payout — the freelancer just delivers work and sends invoices.
+
+Things you can help a freelancer do:
+- manage the list of external clients — add a new company, edit details, archive a client that no longer pays
+- issue an invoice to a client for completed work (always two-step: draft → review breakdown with the user → send)
+- track payment status — invoice flows \`new\` → \`sent\` → \`payment_queued\` → \`paid\`
+- cancel a sent invoice if the user needs to (the client gets notified of cancellation)
+
+Constraints to know (and surface to the user when relevant):
+- **EUR or USD only**; the currency is fixed per client at creation and cannot change.
+- **Only legal clients** (companies). The F2B product does not support invoicing individuals.
+- **Bank transfer is currently the only payment method** exposed to clients.
+- **Two-step send is mandatory.** Always call \`f2b_createInvoiceDraft\` first, show the breakdown / total to the user for explicit confirmation, then \`f2b_sendInvoiceDraft\`. Once sent, the client gets an email; the only recovery is \`f2b_cancelInvoice\`.
+- Commission is taken by Mellow on each invoice — paid either by the freelancer (deducted from payable) or by the client (added to total), chosen per invoice. Get the rate from the backend response — do not hard-code.
+
+Not exposed in this MCP — point the user to https://my.mellow.io/ for:
+- withdrawals from the Mellow balance (to bank/card/wallet/crypto)
+- monthly tax document downloads
+- "Offers" (Secure Deal escrow product) — separate flow from invoices, not yet wrapped here
+
+## How to answer "what can you do?"
+
+When the user asks "what can you do" / "what is this" / "help":
+- **Describe workflows in plain language**, not tool names or MCP internals. The user UX is "help me hire a designer" / "pay this contractor" — not a directory of \`scout_*\` and \`getCompanyBalance\` prefixes.
+- Use the bullets above as a starting point; tailor examples to context if you know the user's industry.
+- Only mention specific tool names when the user explicitly asks how something works under the hood, or when you're about to take a destructive action and need to name it for confirmation.
+- For deeper recipes, fetch \`mellow://workflows\` (12 documented end-to-end flows) — but summarise in your own words, don't paste it verbatim.
+
+---
+
+The rest of this primer is operational guidance for **driving the tools correctly** — read on for state machines, precondition rules, common mistakes, and error semantics.
+
+## Scout ↔ CoR boundary
+
+Scout and CoR live in **separate databases**. A Scout applicant is not a CoR freelancer. To engage a Scout candidate contractually, the agent must call \`inviteFreelancer\` (CoR) explicitly — there is no automatic promotion. \`scout_inviteApplicant\` only sends an email; it does not move the applicant anywhere.
 
 ## Identity & multi-company
 
@@ -39,7 +109,7 @@ Side states: \`WAITING_DECLINE_BY_WORKER(11)\`, \`WAITING_FOR_CUSTOMER_DEADLINE_
 Terminal: \`DECLINED_BY_WORKER(6)\`, \`DECLINED_BY_CUSTOMER(8)\`, \`DECLINED_BY_DEADLINE(15)\`.
 
 Customer-side transitions you can trigger:
-- \`createTask\` → DRAFT or NEW
+- \`createTask\` → DRAFT or NEW (governed by balance, see below)
 - \`publishDraftTask\` → DRAFT → NEW
 - \`acceptTask\` → RESULT → FOR_PAYMENT (does NOT pay)
 - \`payForTask\` → FOR_PAYMENT → PAYMENT_QUEUED (pre-check balance!)
@@ -86,6 +156,28 @@ After a Scout position is created, the backend auto-runs a matching pass against
 
 Match statuses: \`new\` → \`viewed\` → \`invited\` (terminal from Scout side; the freelancer's own response is in the Application flow).
 
+## F2B lifecycles + rules (freelancer mode)
+
+**Invoice lifecycle:**
+\`\`\`
+new → sent → payment_queued → paid
+        ↘ cancelled (only from new or sent, via f2b_cancelInvoice)
+\`\`\`
+After \`sent\`, the freelancer cannot un-send — only \`f2b_cancelInvoice\`, which notifies the client.
+
+**Client lifecycle:**
+\`\`\`
+not_verified → verification_in_progress → active        ← happy path
+                                       ↘ verification_failed
+                          archived (manual via f2b_archiveClient)
+                          suspended (manual by Mellow ops)
+\`\`\`
+\`not_verified\` does **not** block invoicing — verification triggers automatically on the client's first payment attempt (~10-15 min). \`archived\` and \`suspended\` clients reject new invoices with 422; sent invoices still work.
+
+**Two-step send invariant (CRITICAL):** \`f2b_createInvoiceDraft\` → user confirms breakdown → \`f2b_sendInvoiceDraft\`. There is intentionally no one-shot \`createAndSend\`. The draft step is where the agent must show subtotal / commission / total / payable to the user and get a clear "yes" before sending. Never call \`sendInvoiceDraft\` without first surfacing the breakdown.
+
+**Out of scope for the agent:** withdrawals, tax documents, Offers (escrow). For any of those, direct the user to https://my.mellow.io/.
+
 ## Top mistakes to avoid
 
 1. Calling \`acceptTask\` and reporting "paid" — payment is a separate \`payForTask\` step.
@@ -98,7 +190,7 @@ Match statuses: \`new\` → \`viewed\` → \`invited\` (terminal from Scout side
 
 ## Confirmation rule
 
-Before any mutating call (\`accept*\`, \`decline*\`, \`pay*\`, \`remove*\`, \`delete*\`, \`close*\`, \`share*\`, \`change*\`) confirm intent with the user, restating the entity ID and the action. Never invent values for \`createTask\` fields — ask the user.
+Before any mutating call (\`accept*\`, \`decline*\`, \`pay*\`, \`remove*\`, \`delete*\`, \`close*\`, \`share*\`, \`change*\`, \`f2b_send*\`, \`f2b_cancel*\`, \`f2b_archive*\`) confirm intent with the user, restating the entity ID and the action. Never invent values for \`createTask\` or \`f2b_createClient\` / \`f2b_createInvoiceDraft\` fields — ask the user. The most consequential confirmation is \`f2b_sendInvoiceDraft\` (email goes to the client; only recovery is cancel).
 
 ## Where to read more
 
