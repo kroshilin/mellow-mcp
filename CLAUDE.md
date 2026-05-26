@@ -6,15 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `npm install` — install deps
 - `npm run dev` / `npx wrangler dev` — run locally on `http://localhost:8788` (requires `.dev.vars`)
-- `npm run type-check` — `tsc --noEmit`, primary correctness check (no test suite exists)
+- `npm run type-check` — `tsc --noEmit`, primary correctness gate
+- `npm test` — vitest unit-test suite under `tests/unit/*.test.ts`. Tests stub `MellowClient` + `McpServer` at the module boundary (no real HTTP) and lock in handler contract: path, method, body shape, call sequence, response wrapping.
 - `npm run cf-typegen` — regenerate `worker-configuration.d.ts` from `wrangler.jsonc` bindings
 - `npm run deploy` / `npx wrangler deploy` — deploy to Cloudflare
 - `npx wrangler secret put <NAME>` — set `MELLOW_CLIENT_ID`, `MELLOW_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`
-- `npx @modelcontextprotocol/inspector@latest` — manual smoke test; connect to `http://localhost:8788/sse`
+- `npx @modelcontextprotocol/inspector@latest` — manual smoke test; connect to `http://localhost:8788/mcp` (Streamable HTTP, preferred). The legacy `/sse` endpoint is still served but deprecated for new integrations.
 
 ## Architecture
 
-Single-Worker MCP server deployed on Cloudflare Workers. Acts as an OAuth proxy: exposes OAuth 2.1 to MCP clients while delegating user auth to Mellow (`wlcm.mellow.io`). The same Mellow access token is used against two product APIs — **Mellow** (`my.mellow.io`) and **AI Scout** (`aiscout-api.mellow.io`) — via two separately-constructed clients inside one `McpAgent`.
+Single-Worker MCP server deployed on Cloudflare Workers. Acts as an OAuth proxy: exposes OAuth 2.1 to MCP clients while delegating user auth to Mellow (`wlcm.mellow.io`). The same Mellow access token is used against the Mellow API (`my.mellow.io`) and the Scout API (`aiscout-api.mellow.io`) — via two separately-constructed clients inside one `McpAgent`. Three product surfaces exposed: **CoR** + **AI Scout** (company mode), **F2B invoicing** (freelancer mode) — registered conditionally by `userRole`.
 
 ### Request flow
 
@@ -30,13 +31,13 @@ Single-Worker MCP server deployed on Cloudflare Workers. Acts as an OAuth proxy:
 
 ### Tool registration pattern
 
-Every module under `src/tools/` and `src/tools/scout/` exports one `registerXxxTools(server, client)` function that calls `server.tool(name, description, zodSchema, handler)`. Mellow tools use unprefixed names; Scout tools are prefixed `scout_`. Adding a tool = add a `server.tool(...)` call in the right module; wiring in `src/index.ts` is only needed when creating a **new module**.
+Every module under `src/tools/`, `src/tools/scout/`, `src/tools/f2b/` exports one `registerXxxTools(server, client)` function that calls `server.tool(name, description, zodSchema, handler)`. CoR tools use unprefixed names; Scout tools are prefixed `scout_`; F2B tools are prefixed `f2b_`. `src/index.ts` conditionally registers Scout + CoR when `userRole === "customer"`, and F2B + profile when `userRole === "freelancer"`. Adding a tool = add a `server.tool(...)` call in the right module; wiring in `src/index.ts` is only needed when creating a **new module**.
 
 ### Agent surface (primer + resources)
 
 The MCP server delivers three layers of context to any agent that connects:
 
-1. **`AGENT_PRIMER`** in `src/agent-primer.ts` — a ~6 KB markdown string passed as `McpServer({...}, { instructions })`. Returned in the `initialize` response and auto-injected as system prompt by clients (Claude Desktop, Cursor, Inspector). Keep it concise (~3–5 KB markdown). Update it when a *behavioural* expectation changes (e.g. the accept-and-pay pivot), not for every tool change.
+1. **`AGENT_PRIMER`** in `src/agent-primer.ts` — a ~16 KB markdown string passed as `McpServer({...}, { instructions })`. Returned in the `initialize` response and auto-injected as system prompt by clients (Claude Desktop, Cursor, Inspector). Two halves: user-facing (what Mellow does for company vs freelancer, how to answer "what can you do?" in workflow terms) and operational (mode-detection, state machines, two-step invariants, error semantics). Aim ≤ 20 KB. Update when a _behavioural_ expectation changes (e.g. accept-and-pay, F2B two-step send), not for every tool description tweak.
 2. **MCP resources** registered in `src/index.ts` via `this.server.registerResource(...)`:
    - `mellow://domain` → `docs/DOMAIN.md`
    - `mellow://workflows` → `docs/WORKFLOWS.md`
@@ -45,7 +46,7 @@ The MCP server delivers three layers of context to any agent that connects:
 
 The three markdown files are imported as strings via Wrangler's text loader (`wrangler.jsonc → rules`). The ambient declaration `declare module "*.md"` is provided by `wrangler types` (in `worker-configuration.d.ts`).
 
-**`docs/BACKEND_TICKETS.md`** is git-only and tracks open backend issues affecting MCP tools. It is **not** bundled in the worker and not served as a resource. The three agent-facing docs above (`DOMAIN`, `WORKFLOWS`, `ANTI_PATTERNS`) are the only ones the runtime agent ever sees.
+Backend bugs / tickets we file against the Mellow backend are tracked in the external issue tracker (Jira/Linear), not in this repo. When a tool description includes a "known backend bug" note, the source of truth is the linked external ticket; update the description when the backend ships a fix.
 
 ### Multi-company `X-Company-Id` plumbing
 
@@ -58,6 +59,7 @@ The three markdown files are imported as strings via Wrangler's text loader (`wr
 ### OAuth security model
 
 `src/workers-oauth-utils.ts` implements:
+
 - **CSRF**: double-submit cookie on the approval form
 - **State binding**: `createOAuthState` stores the `AuthRequest` in KV keyed by a random token; `bindStateToSession` sets a `__Host-CONSENTED_STATE` cookie; `validateOAuthState` on `/callback` requires both KV lookup **and** cookie match. This defeats state-token injection where an attacker substitutes their own state into a victim's flow.
 - **Approved clients**: once a user consents for a `clientId`, an encrypted cookie skips the approval dialog on subsequent authorizations.
@@ -66,8 +68,8 @@ Do not loosen these checks without understanding the injection attack they preve
 
 ## Conventions
 
-- Tabs for indentation (see `.prettierrc` — `useTabs: false` is contradicted by the actual codebase; keep tabs to match existing files).
-- No test framework is configured. `npm run type-check` is the only automated gate.
+- **2-space indentation** per `.prettierrc` (`useTabs: false`). Run `npx prettier --write <file>` before commit if unsure.
+- Vitest is configured for unit tests under `tests/unit/*.test.ts`. `npm run type-check` + `npm test` are the two automated gates.
 - `worker-configuration.d.ts` is generated — never hand-edit. Regenerate after changing bindings or vars in `wrangler.jsonc`. Secret bindings (`MELLOW_CLIENT_ID`, `MELLOW_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`) are not picked up by `wrangler types`; they are declared in `src/types/env-secrets.d.ts` instead.
 - `Props` type in `src/utils.ts` is the contract between `MellowHandler` and `MyMCP`; adding a field requires updating both.
 - Secrets live in Wrangler secrets in prod and `.dev.vars` locally — never in `wrangler.jsonc`.
@@ -75,4 +77,4 @@ Do not loosen these checks without understanding the injection attack they preve
 
 ## Known backend bugs
 
-Active bugs blocking certain MCP tools are documented in `docs/BACKEND_TICKETS.md`. Tool descriptions inline a brief note about ongoing issues. When a backend fix lands, update both the tool description and the ticket status.
+Active backend bugs that affect MCP tools are tracked in the external issue tracker (Jira/Linear). Tool descriptions inline a brief note about ongoing issues when the workaround needs to be agent-visible. When a backend fix lands, update the tool description and close the external ticket.

@@ -1,18 +1,30 @@
-# Mellow & Scout — Domain Guide for Agents
+# Mellow — Domain Guide for Agents
 
 > Read this **before** calling any tool. Describes only what an agent observes via the MCP tools and the public API.
+>
+> The MCP server exposes three product surfaces — **CoR** and **AI Scout** for companies hiring contractors, **F2B invoicing** for freelancers billing their own external clients. Tools are registered conditionally by user role; an individual session never sees both halves at once. Mode-detection lives in `agent-primer.ts`.
 
 ---
 
 ## 1. Actors
 
-| Role | Where | Notes |
-|---|---|---|
-| **Customer (Admin)** | CoR | Full permissions: invite freelancers, create/pay tasks, configure webhooks. |
-| **Customer (Member)** | CoR | Restricted subset. Treat any 403 as "this user cannot do this". |
-| **Freelancer** | CoR | Contractor the company engages. Receives payouts. Logs in via the same OAuth but uses freelancer-only endpoints (out of scope for this MCP). |
-| **Applicant** | Scout | Candidate who responded to a contractor request. Inside Scout only until invited into CoR. |
-| **Pool Freelancer** | Scout | Contractor uploaded by the company into its private pool. |
+**Company mode** (CoR + Scout — registered when `userRole === "customer"`):
+
+| Role                   | Where | Notes                                                                                                                                                  |
+| ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Customer (Admin)**   | CoR   | Full permissions: invite freelancers, create/pay tasks, configure webhooks.                                                                            |
+| **Customer (Member)**  | CoR   | Restricted subset. Treat any 403 as "this user cannot do this".                                                                                        |
+| **Freelancer**         | CoR   | Contractor the company engages. Receives payouts. Logs in via the same OAuth but uses freelancer-only endpoints (out of scope for company-mode tools). |
+| **Applicant**          | Scout | Candidate who responded to a contractor request. Inside Scout only until invited into CoR.                                                             |
+| **Matched Freelancer** | Scout | Candidate the matching engine surfaced automatically against an open position. Inside Scout's matching tables; see §10.4.                              |
+| **Pool Freelancer**    | Scout | Contractor uploaded by the company into its private pool.                                                                                              |
+
+**Freelancer mode** (F2B — registered when `userRole === "freelancer"`):
+
+| Role                | Where | Notes                                                                                                                                                            |
+| ------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Freelancer Self** | F2B   | The OAuth-authorized freelancer. Invoices their own external clients through Mellow as the legal intermediary.                                                   |
+| **F2B Client**      | F2B   | An external company (`type=legal` only — no individuals) the freelancer invoices. Currency is fixed at creation (EUR or USD). Has its own lifecycle — see §10.2. |
 
 **ID synonyms:** `workerId` and `freelancerId` in different endpoints are the **same value** — the freelancer's user ID. Treat them as synonyms.
 
@@ -28,11 +40,11 @@ Two ways to set the company context:
 1. **`X-Company-Id` request header** (preferred) — per-request override. Case-insensitive. Wired through `Props.activeCompanyId`. 403 if user doesn't belong.
 2. **Server-side default** via `switchCompany` (`POST /api/customer/companies/{companyId}/default`). Persists across sessions. **Avoid for parallel sessions** — mutates a shared default and races.
 
-| Scenario | Use |
-|---|---|
-| Long-lived single-company integration | `switchCompany` once, rely on default |
-| Parallel sessions / multiple companies | `X-Company-Id` per request, never `switchCompany` |
-| Mixed UI + API on same account | `X-Company-Id` per request to avoid clobbering UI default |
+| Scenario                               | Use                                                       |
+| -------------------------------------- | --------------------------------------------------------- |
+| Long-lived single-company integration  | `switchCompany` once, rely on default                     |
+| Parallel sessions / multiple companies | `X-Company-Id` per request, never `switchCompany`         |
+| Mixed UI + API on same account         | `X-Company-Id` per request to avoid clobbering UI default |
 
 ---
 
@@ -103,48 +115,49 @@ Freelancer's regulatory classification (individual / self-employed / entrepreneu
 
 14 values visible in the `state` field. Pass numeric IDs to `PUT /api/customer/tasks/{id}`. (Gaps 7/9/10 are historical — never seen.)
 
-| ID | Name | Group | Meaning |
-|---|---|---|---|
-| 17 | `DRAFT` | active | Created, not published. Freelancer doesn't see it. |
-| 1 | `NEW` | active | Published. Awaiting freelancer accept. |
-| 2 | `IN_WORK` | active | Freelancer accepted and working. |
-| 3 | `RESULT` | active | Result submitted. Customer reviews. |
-| 4 | `FOR_PAYMENT` | active | Customer accepted. Awaiting payout call. |
-| 12 | `PAYMENT_QUEUED` | transient | Payout being debited (system). |
-| 5 | `FINISHED` | terminal | Closed and paid. |
-| 6 | `DECLINED_BY_WORKER` | terminal | Freelancer declined. |
-| 8 | `DECLINED_BY_CUSTOMER` | terminal | Customer confirmed freelancer's decline. (No single-call cancel for live `NEW`/`IN_WORK` — see §5.6.) |
-| 15 | `DECLINED_BY_DEADLINE` | terminal | System-closed after customer didn't decide on soft deadline. |
-| 11 | `WAITING_DECLINE_BY_WORKER` | side | Freelancer requested decline; awaiting customer confirm. |
-| 14 | `WAITING_FOR_CUSTOMER_DEADLINE_DECISION` | side | Soft deadline reached; customer must extend or cancel. |
-| 13 | `DISPUTE_IN_PROGRESS` | side | Dispute opened. Work paused. |
-| 16 | `CHANGESET_APPROVAL_IN_PROGRESS` | side | Change to terms proposed; awaiting other side. |
+| ID  | Name                                     | Group     | Meaning                                                                                                                                                                                                                                                          |
+| --- | ---------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 17  | `DRAFT`                                  | active    | Created, not published. Freelancer doesn't see it.                                                                                                                                                                                                               |
+| 1   | `NEW`                                    | active    | Published. Awaiting freelancer accept.                                                                                                                                                                                                                           |
+| 2   | `IN_WORK`                                | active    | Freelancer accepted and working.                                                                                                                                                                                                                                 |
+| 3   | `RESULT`                                 | active    | Result submitted. Customer reviews.                                                                                                                                                                                                                              |
+| 4   | `FOR_PAYMENT`                            | active    | Customer accepted. Awaiting payout call.                                                                                                                                                                                                                         |
+| 12  | `PAYMENT_QUEUED`                         | transient | Payout being debited (system).                                                                                                                                                                                                                                   |
+| 5   | `FINISHED`                               | terminal  | Closed and paid.                                                                                                                                                                                                                                                 |
+| 6   | `DECLINED_BY_WORKER`                     | terminal  | Freelancer declined.                                                                                                                                                                                                                                             |
+| 8   | `DECLINED_BY_CUSTOMER`                   | terminal  | Soft cancel by customer. From `NEW`/`DRAFT`: direct via `declineTask`. From `RESULT`/`FOR_PAYMENT`: requires two-step path via `WAITING_DECLINE_BY_WORKER`. From `IN_WORK`: customer must ask freelancer to start the decline first. Hard delete is not exposed. |
+| 15  | `DECLINED_BY_DEADLINE`                   | terminal  | System-closed after customer didn't decide on soft deadline.                                                                                                                                                                                                     |
+| 11  | `WAITING_DECLINE_BY_WORKER`              | side      | Freelancer requested decline; awaiting customer confirm.                                                                                                                                                                                                         |
+| 14  | `WAITING_FOR_CUSTOMER_DEADLINE_DECISION` | side      | Soft deadline reached; customer must extend or cancel.                                                                                                                                                                                                           |
+| 13  | `DISPUTE_IN_PROGRESS`                    | side      | Dispute opened. Work paused.                                                                                                                                                                                                                                     |
+| 16  | `CHANGESET_APPROVAL_IN_PROGRESS`         | side      | Change to terms proposed; awaiting other side.                                                                                                                                                                                                                   |
 
 Happy path: `DRAFT → NEW → IN_WORK → RESULT → FOR_PAYMENT → PAYMENT_QUEUED → FINISHED`.
 
 ### 5.2 Transitions you can trigger
 
-| From → To | Tool |
-|---|---|
-| (none) → `NEW` or `DRAFT` | `createTask` — `NEW` when balance ≥ `priceWithCommission`, `DRAFT` otherwise (silent backend downgrade; verify via `getTask(uuid).state`) |
-| `DRAFT` → `NEW` | `publishDraftTask` |
-| `RESULT` → `FOR_PAYMENT` | `acceptTask` (also from `WAITING_DECLINE_BY_WORKER` / `WAITING_FOR_CUSTOMER_DEADLINE_DECISION`) |
-| `FOR_PAYMENT` → `PAYMENT_QUEUED` | `payForTask` |
-| `RESULT` → `IN_WORK` | `resumeTask` (return for rework) |
-| `WAITING_DECLINE_BY_WORKER` → `DECLINED_BY_CUSTOMER` | `declineTask` (or `changeTaskStatus(state=8)`) |
-| `WAITING_FOR_CUSTOMER_DEADLINE_DECISION` → previous | `changeDeadline` |
+| From → To                                            | Tool                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| (none) → `NEW` or `DRAFT`                            | `createTask` — without `createAsDraft`: `NEW` when balance ≥ `priceWithCommission`, `DRAFT` otherwise (silent backend downgrade). With `createAsDraft: true`: explicit DRAFT regardless of balance (balance not checked). Always verify via `getTask(uuid).state`. |
+| `DRAFT` → `NEW`                                      | `publishDraftTask`                                                                                                                                                                                                                                                 |
+| `RESULT` → `FOR_PAYMENT`                             | `acceptTask` (also from `WAITING_DECLINE_BY_WORKER` / `WAITING_FOR_CUSTOMER_DEADLINE_DECISION`)                                                                                                                                                                    |
+| `FOR_PAYMENT` → `PAYMENT_QUEUED`                     | `payForTask`                                                                                                                                                                                                                                                       |
+| `RESULT` → `IN_WORK`                                 | `resumeTask` (return for rework)                                                                                                                                                                                                                                   |
+| `NEW` / `DRAFT` → `DECLINED_BY_CUSTOMER`             | `declineTask` — direct soft cancel from these two states (single call). Backend gate is `canBeDeclinedByCustomer` (true for both).                                                                                                                                 |
+| `WAITING_DECLINE_BY_WORKER` → `DECLINED_BY_CUSTOMER` | `declineTask` (or `changeTaskStatus(state=8)`) — used when the freelancer initiated the decline from `IN_WORK` / `RESULT` / `FOR_PAYMENT`.                                                                                                                         |
+| `WAITING_FOR_CUSTOMER_DEADLINE_DECISION` → previous  | `changeDeadline`                                                                                                                                                                                                                                                   |
 
 **Not reachable via this MCP** (freelancer- or system-driven): `NEW → IN_WORK`, `IN_WORK → RESULT`, `* → DECLINED_BY_WORKER`, all dispute paths, `PAYMENT_QUEUED → FINISHED` (system async), soft-deadline triggers.
 
 ### 5.3 Mutation guards
 
-| Tool | Legal states | Otherwise |
-|---|---|---|
-| `changeDeadline` | only `WAITING_FOR_CUSTOMER_DEADLINE_DECISION (14)`, with prev active state in `{NEW, IN_WORK}`, new deadline in future | 400 |
-| `addTaskFiles` | everything except `FINISHED`, `PAYMENT_QUEUED` | 400 |
-| `addTaskMessage` | any state | — |
-| Edit price / `workerCurrency` | `DRAFT`, `NEW`, `DISPUTE_IN_PROGRESS`, plus `IN_WORK`/`RESULT` **iff** company escrow is enabled | 400 |
-| Mutate after payment | `FINISHED (5)` and `PAYMENT_QUEUED (12)` are fully read-only | 400 |
+| Tool                          | Legal states                                                                                                           | Otherwise |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------- |
+| `changeDeadline`              | only `WAITING_FOR_CUSTOMER_DEADLINE_DECISION (14)`, with prev active state in `{NEW, IN_WORK}`, new deadline in future | 400       |
+| `addTaskFiles`                | everything except `FINISHED`, `PAYMENT_QUEUED`                                                                         | 400       |
+| `addTaskMessage`              | any state                                                                                                              | —         |
+| Edit price / `workerCurrency` | `DRAFT`, `NEW`, `DISPUTE_IN_PROGRESS`, plus `IN_WORK`/`RESULT` **iff** company escrow is enabled                       | 400       |
+| Mutate after payment          | `FINISHED (5)` and `PAYMENT_QUEUED (12)` are fully read-only                                                           | 400       |
 
 ### 5.4 `createTask` preconditions
 
@@ -168,12 +181,12 @@ Customer-side payment is **two explicit calls**:
 
 Companies have one of four hold policies (per-company config, agent doesn't choose):
 
-| Policy | Funds reserved at | Funds debited at |
-|---|---|---|
-| No hold | never | `PAYMENT_QUEUED` (post-hoc) |
-| Hold on task create | `createTask` (non-draft) or `publishDraftTask` | `FINISHED` |
-| Hold on task accept | `acceptTask` | `FINISHED` |
-| Hold after task accept | async right after accept | `FINISHED` |
+| Policy                 | Funds reserved at                              | Funds debited at            |
+| ---------------------- | ---------------------------------------------- | --------------------------- |
+| No hold                | never                                          | `PAYMENT_QUEUED` (post-hoc) |
+| Hold on task create    | `createTask` (non-draft) or `publishDraftTask` | `FINISHED`                  |
+| Hold on task accept    | `acceptTask`                                   | `FINISHED`                  |
+| Hold after task accept | async right after accept                       | `FINISHED`                  |
 
 The balance check happens **either at `acceptTask` (hold-on-accept) or at `payForTask` (other policies)**. Insufficient funds → HTTP 400, task stays in current state, no async retry.
 
@@ -181,14 +194,16 @@ The balance check happens **either at `acceptTask` (hold-on-accept) or at `payFo
 
 ### 5.6 Cancellation paths
 
-There is **no single-call cancel** for live `NEW`/`IN_WORK` tasks. Available paths to a terminal state:
+Cancellation is **soft** everywhere (task moves to a terminal state, never hard-deleted). There is no hard-delete API.
 
-- **DRAFT (17)** — no cancel/delete API. Draft persists until published or cleaned up by support.
-- **NEW / IN_WORK** — ask the freelancer to start a decline (their side) → then `declineTask` confirms → `DECLINED_BY_CUSTOMER`. Or open a dispute (out of MCP).
+- **DRAFT (17)** — `declineTask` works directly → `DECLINED_BY_CUSTOMER (8)`. Confirmed by `canBeDeclinedByCustomer` gate. (If the user wants the draft to simply disappear from listings, that's a support operation — no API.)
+- **NEW (1)** — `declineTask` works directly → `DECLINED_BY_CUSTOMER (8)`. Single call, no two-step needed.
+- **IN_WORK (2)** — customer cannot decline directly. Ask the freelancer to start a decline (their side moves it to `WAITING_DECLINE_BY_WORKER (11)`) → `declineTask` confirms. Or open a dispute (out of MCP).
+- **RESULT (3) / FOR_PAYMENT (4)** — same two-step as IN_WORK: freelancer initiates from their side → `declineTask` confirms.
 - **WAITING_DECLINE_BY_WORKER (11)** — `declineTask` confirms freelancer's decline.
 - **WAITING_FOR_CUSTOMER_DEADLINE_DECISION (14)** — let timer expire → system sets `DECLINED_BY_DEADLINE (15)`.
 
-Editing price/description after publish is also **not exposed** via this MCP. Workarounds: dispute → changeset (out of MCP), or `resumeTask` + decline + recreate.
+Editing price/description after publish is **not exposed** via this MCP. Workarounds: dispute → changeset (out of MCP), or `declineTask` + recreate.
 
 ---
 
@@ -233,6 +248,7 @@ KYC link, contact-change flow, taxation status change, taxpayer ID setup, offer 
 `status` field values: `active`, `closed`. **No drafts.** `moderatedAt` is an orthogonal flag, not a state.
 
 Transitions:
+
 - `null → active` on `scout_createPosition` (no verified-account / email / trial gate).
 - `active → closed` via `scout_closePosition`. Removes from matching. **Does not touch Applications** — their statuses and `invitedAt` stay as-is. New applies are blocked (4xx).
 - `closed → active` via `scout_openPosition`.
@@ -268,7 +284,7 @@ To finalize a Scout candidate contractually: take their email from the applicati
 ### 8.1 Errors
 
 - **HTTP 400** — domain rule violation ("wrong task state", "action not supported", "insufficient funds"). Most common. Read the body.
-- **HTTP 403** — sometimes "wrong state" (e.g. `declineTask` from non-WAITING state), sometimes actual permission denial. Don't conflate — check tool descriptions for state-driven 403s.
+- **HTTP 403** — sometimes "wrong state" (e.g. `declineTask` from `IN_WORK`, where the freelancer must initiate the decline first), sometimes actual permission denial. Don't conflate — check tool descriptions for state-driven 403s.
 - **HTTP 409** — uniqueness/conflict. `code` is the most stable thing to match on **when non-zero**. Some endpoints (like `publishDraftTask` insufficient-funds) return `code: 0` — branch on status alone.
 - **HTTP 422** — field validation. Body is a `field → error` map. Render per-field as `"<field>: <error>"`.
 - **HTTP 423** — short backend lock (e.g. concurrent invite). Retry briefly.
@@ -316,6 +332,7 @@ Exactly two: `admin` and `member`. No intermediate roles. `admin` has full permi
 ### 9.1 Tasks
 
 **"Create a task for freelancer X"**
+
 ```
 → (dialog) Confirm with the user: title, description, workerId, categoryId, price, deadline,
            and the 3 mandatory attributes for the chosen category. Never invent values.
@@ -332,6 +349,7 @@ Exactly two: `admin` and `member`. No intermediate roles. `admin` has full permi
 ```
 
 **"Pay task Y"** — two-step
+
 ```
 → getTask(Y) — read state
    - state = RESULT (3):
@@ -348,14 +366,19 @@ Exactly two: `admin` and `member`. No intermediate roles. `admin` has full permi
 **"Return for rework"** — `getTask` → if state == RESULT (3): `resumeTask({taskId})` → IN_WORK; otherwise explain.
 
 **"Cancel the task"**
+
 ```
 → getTask(Y) — read state
-   - DRAFT (17): tell user — no cancel/delete API for drafts
+   - DRAFT (17) / NEW (1): direct soft cancel → declineTask({uuid: Y}) → DECLINED_BY_CUSTOMER (8)
    - WAITING_DECLINE_BY_WORKER (11): declineTask confirms freelancer's decline
-   - NEW / IN_WORK: NO direct customer-side cancel.
-       Options: ask freelancer to decline → then declineTask, or open dispute (out of MCP)
+   - IN_WORK (2): customer cannot cancel directly. Options:
+       - ask the freelancer to start a decline (their side moves it to 11) → declineTask confirms
+       - open a dispute (out of MCP)
+   - RESULT (3) / FOR_PAYMENT (4): same two-step path (freelancer initiates → declineTask confirms)
    - terminal (FINISHED / DECLINED_*): nothing to cancel
 ```
+
+Cancellation is always soft — the task remains visible in listTasks with `state: 8 DECLINED_BY_CUSTOMER`. There is no hard-delete API anywhere.
 
 **"Extend the deadline"** — only legal in `WAITING_FOR_CUSTOMER_DEADLINE_DECISION (14)` with prev active state in `{NEW, IN_WORK}` and new deadline in future. Otherwise 400. Shortening / editing other params after publish is **not exposed**.
 
@@ -374,6 +397,7 @@ Exactly two: `admin` and `member`. No intermediate roles. `admin` has full permi
 **"Find a freelancer"** — by email: `findFreelancerByEmail` (lowercase, no `+` aliasing). By phone: `findFreelancerByPhone` (digits-only). By description: `listFreelancers({...filters...})`.
 
 **"Remove from team"**
+
 ```
 → (recommended pre-check) listTasks({workerId: X, state: [1, 2, 3, 4, 11, 13, 14, 16]})
    - if open tasks: warn — backend returns 422 "Worker have not finished tasks"
@@ -400,6 +424,7 @@ Exactly two: `admin` and `member`. No intermediate roles. `admin` has full permi
 ### 9.5 Scout
 
 **"Create a contractor request"** — single user-intent, two MCP calls:
+
 ```
 → scout_generatePosition({brief}) → poll scout_getGeneratePositionTask({taskId}) until ready
 → scout_createPosition({title, description, specialization, budget, ...})
@@ -422,3 +447,106 @@ Exactly two: `admin` and `member`. No intermediate roles. `admin` has full permi
 **"Set up a webhook"** — `getWebhook` to inspect, `createOrUpdateWebhook({url, events: [...]})` to set (replaces — only one per company). Receiver must be idempotent (up to 6 retries). Backend support partial; surface gracefully on 404.
 
 **"I got an error — what now?"** — log `X-Trace-Id` from response headers. For 409, branch on `code` (when non-zero). For 422, render the field map. Never parse `message` for logic.
+
+### 9.7 F2B (freelancer mode)
+
+**"What is Mellow / how does it work for me?"** — describe the legal-intermediary model (see §10.1) in plain language, then list workflow capabilities (manage clients, issue invoices, track payment, cancel). Never enumerate tool names.
+
+**"Add a new client"** → `f2b_createClient({email, country, currency: 'EUR'|'USD', companyName?, regNumber?, vat?, ...})`. Confirm currency choice with the user — it cannot be changed later. Only `legal` clients (companies) are supported; do not attempt individuals.
+
+**"List my clients"** → `f2b_listClients({status?, page?})`. Filter MCP-side for company-name search (backend supports only `status` filter).
+
+**"Update a client"** → `f2b_updateClient({clientId, ...fields-to-change})`. Currency and `type` are immutable. MCP composite under the hood: GET → merge → PUT → GET; pass only the fields you want to change.
+
+**"Archive a client"** → `f2b_archiveClient({clientId})`. Soft-delete. Backend rejects new invoices to archived clients with 422; existing sent invoices keep working. There is no un-archive endpoint.
+
+**"Invoice a client for work"** — single user-intent, mandatory two MCP calls:
+
+```
+→ f2b_createInvoiceDraft({clientId, serviceId, lineItems, commissionPayer, invoiceDate, ...})
+  ← response includes breakdown {subtotal, commissionPercent, commissionAmount, total, payable}
+→ (dialog) Show the breakdown to the user. Get explicit "yes".
+→ f2b_sendInvoiceDraft({invoiceId})
+  ← client receives email with the payment link, status moves to 'sent'
+```
+
+Never call `sendInvoiceDraft` without first surfacing the breakdown from the draft. There is intentionally no one-shot `createAndSend`.
+
+**"Cancel an invoice"** → `f2b_cancelInvoice({invoiceId})`. Allowed only from `new` or `sent`. Backend returns 422 for any other state (`paid`, `cancelled`, `payment_queued`). The client gets notified of the cancellation.
+
+**"Track payment"** → `f2b_getInvoice({invoiceId})`. Inspect `status` (`new` → `sent` → `payment_queued` → `paid`). For lists: `f2b_listInvoices({status?, page?})`.
+
+**"Withdraw funds" / "Get tax docs" / "Use Offers / Secure Deal"** → out of scope for this MCP. Direct the user to https://my.mellow.io/.
+
+---
+
+## 10. F2B (freelancer-to-business invoicing)
+
+### 10.1 Legal model
+
+Mellow sits between the freelancer and their client as the legal contracting party on **both** sides:
+
+- The freelancer signs an agreement with Mellow once (at onboarding).
+- Mellow signs with each client at the client's first payment attempt.
+- Client pays Mellow → Mellow pays the freelancer.
+
+There is no direct contract between the freelancer and the client. Mellow handles legal, compliance, tax documentation, and international payout. Three Mellow legal entities (Cyprus, US, Netherlands) are auto-selected per invoice based on the client's location — the freelancer does not choose.
+
+### 10.2 Client lifecycle
+
+```
+not_verified → verification_in_progress → active        ← happy path
+                                       ↘ verification_failed
+                          archived (manual via f2b_archiveClient)
+                          suspended (manual by Mellow ops)
+```
+
+- **`not_verified`** is the initial state and **does NOT block invoicing** — verification auto-triggers on the client's first payment attempt (~10-15 minutes the first time, then `active`).
+- **`verification_failed`** — invoices can still be sent, but payment will keep failing until the client fixes their company data.
+- **`archived`** / **`suspended`** — new invoices rejected with 422; already-sent invoices keep working.
+
+Currency (EUR or USD) and `type` (`legal` only) are fixed at creation. F2B does not accept payments from individuals (`type=individual` is product-disabled).
+
+### 10.3 Invoice lifecycle
+
+```
+new → sent → payment_queued → paid
+        ↘ cancelled (only from new or sent, via f2b_cancelInvoice)
+```
+
+- **`new`** — draft on the freelancer's side; client knows nothing yet. Created by `f2b_createInvoiceDraft`.
+- **`sent`** — email delivered to client.email; public `paymentUrl` exists. Created by `f2b_sendInvoiceDraft`.
+- **`payment_queued`** — client initiated payment, settlement in flight.
+- **`paid`** — funds on the freelancer's Mellow balance (90% within minutes; up to 6 business days for extra checks).
+- **`cancelled`** — only reachable from `new` or `sent` via `f2b_cancelInvoice`. The client gets an email notification.
+
+There is **no** edit-invoice endpoint. For a corrected version: cancel, then create a new draft.
+
+### 10.4 Two-step send invariant (CRITICAL)
+
+`f2b_createInvoiceDraft` → user confirms breakdown → `f2b_sendInvoiceDraft`. Always two MCP calls. The agent must show the breakdown returned by the draft (subtotal, commissionPercent, commissionAmount, total, payable) to the user and get an explicit "yes" before sending. Once sent, the email is in the client's inbox; the only recovery is `f2b_cancelInvoice` (which also notifies the client).
+
+There is **no** `f2b_createAndSendInvoice`. Do not invent one.
+
+### 10.5 Commissions
+
+Mellow takes a service fee on each invoice paid. Fee payer is chosen per invoice and **cannot be split**:
+
+- `commissionPayer: 'freelancer'` → fee deducted from `payable`; client sees a clean total.
+- `commissionPayer: 'customer'` → fee added to `total`; client pays a bit more, freelancer gets the full subtotal.
+
+The current rate is returned in the `breakdown` block of the draft response (`commissionPercent`, `commissionAmount`). Never hard-code the percentage — read it from the backend response.
+
+### 10.6 Limits + filter caveats
+
+- ≤ 10 line items per invoice; line-item sum ≤ 10 000 in client currency.
+- `invoiceDate` must be ≤ today (future date → 422).
+- `f2b_listClients` and `f2b_listInvoices` only support `status` filter + pagination. Search by name / date / client is **MCP-side filtering after fetch**.
+
+### 10.7 Out of scope for the agent
+
+These are real Mellow capabilities but not wrapped in this MCP. Direct the user to https://my.mellow.io/ when asked:
+
+- **Withdrawals** from the freelancer's Mellow balance (to bank / card / wallet / crypto; crypto excluded in Russia, North Korea, Iran).
+- **Tax documents** — Mellow auto-generates monthly invoices and work-completion certificates; freelancer downloads from the web cabinet.
+- **Offers** (Secure Deal escrow product) — different flow from Invoices; not yet wrapped.

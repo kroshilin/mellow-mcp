@@ -105,7 +105,7 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
 
   server.tool(
     "createTask",
-    "Create a task for a freelancer. Returns the new task UUID only — call getTask(uuid) right after to see the full task and its state. If the company balance covers the task cost, the task is published (NEW) and the freelancer sees it. If the balance is insufficient, the task is silently saved as DRAFT with no error — the user won't see it in their active tasks until they top up at https://my.mellow.io/ → Finances → Top up and you call publishDraftTask. Pre-check getCompanyBalance to know which path to expect. Title is normalized (em-dashes, curly quotes, NBSP) before send.",
+    "Create a task for a freelancer. Returns `{uuid}` only — call `getTask(uuid)` after to read the actual state. Initial state: with `createAsDraft: true` → DRAFT(17), balance not checked. Without (default) → NEW(1) if balance covers, else silent downgrade to DRAFT(17). Title is normalized (em-dashes, curly quotes, NBSP) before send.",
     {
       title: z
         .string()
@@ -155,23 +155,20 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
         .array(z.number())
         .optional()
         .describe("Task group ID. The field is an array for historical reasons — pass a single ID wrapped in an array: [groupId]."),
+      createAsDraft: z
+        .boolean()
+        .optional()
+        .describe(
+          "Opt-in explicit DRAFT. `true` → backend creates the task as DRAFT(17) regardless of balance (balance is NOT checked); use this when the user wants review-before-publish on a funded company. Omit or `false` → backend balance-gate: NEW(1) if covered, otherwise SILENT downgrade to DRAFT(17) with no warning. Always verify the actual state via getTask(uuid) after create — especially when `createAsDraft` is omitted, because the silent downgrade is the canonical source of 'why didn't the freelancer see my task' user confusion.",
+        ),
     },
     { title: "Create task" },
     async (params) => {
-      // Defensive check for known-removed fields. MCP SDK's tool() takes a
-      // ZodRawShape and wraps it in z.object() with default strip semantics,
-      // so unknown keys are silently dropped — that masks agent migration
-      // bugs (e.g. agent passes legacy `createType:'draft'` and gets a
-      // silently-ignored no-op). Reject explicitly with the rename hint.
-      const REMOVED_FIELDS: Record<string, string> = {
-        createType:
-          "removed — DRAFT vs NEW is now governed by company balance (silent DRAFT on insufficient funds); do not pass this field.",
-        acceptanceFileTemplateIds: "renamed → use `acceptanceFileIds` instead.",
-      };
-      for (const [field, hint] of Object.entries(REMOVED_FIELDS)) {
-        if (field in (params as Record<string, unknown>)) {
-          throw new Error(`createTask: field '${field}' is no longer accepted — ${hint}`);
-        }
+      // Defensive check for the one truly-removed legacy field.
+      // `createAsDraft` is the live opt-in (Zod-validated above); only
+      // `acceptanceFileTemplateIds` is the V1 rename that still trips agents.
+      if ("acceptanceFileTemplateIds" in (params as Record<string, unknown>)) {
+        throw new Error("createTask: field 'acceptanceFileTemplateIds' is renamed — use `acceptanceFileIds` instead.");
       }
 
       // Normalize title to keep within the backend's special-char whitelist:
@@ -325,12 +322,12 @@ export function registerTaskTools(server: McpServer, client: MellowClient) {
 
   server.tool(
     "declineTask",
-    "Confirm the freelancer's decline request. Only valid when the task is in state WAITING_DECLINE_BY_WORKER (11) → transitions to DECLINED_BY_CUSTOMER (8). Does NOT cancel a live task — there is no single-call cancel.",
+    "Cancel a task on the customer side. Soft cancel only — task transitions to DECLINED_BY_CUSTOMER(8), it is not hard-deleted. Two paths depending on state: (a) NEW(1) and DRAFT(17) → direct cancel, single call moves straight to DECLINED_BY_CUSTOMER(8); (b) RESULT(3) and FOR_PAYMENT(4) require a two-step path — ask the freelancer to start a decline first (their side moves the task to WAITING_DECLINE_BY_WORKER(11)), then call this tool to confirm. IN_WORK(2) is not directly cancellable by the customer either; ask the freelancer to start the decline. Hard delete is not exposed by the API — declined tasks stay visible in listTasks with status 8.",
     {
       taskId: z.number().optional().describe("Task ID. Provide this OR uuid."),
       uuid: z.string().optional().describe("Task UUID. Provide this OR taskId."),
     },
-    { title: "Confirm freelancer decline" },
+    { title: "Cancel / decline task", destructiveHint: true },
     async (params) => {
       const result = await client.post<unknown>("/customer/tasks/decline", params);
       return {

@@ -216,26 +216,29 @@ describe("getAllowedCurrencies companyId default (Bug #3)", () => {
   });
 });
 
-describe("createTask removed-field guard (NEW-B)", () => {
-  it("rejects legacy createType with rename hint", async () => {
-    const { stub } = makeClientStub({});
+describe("createTask schema — createAsDraft + removed-field guard", () => {
+  it("accepts createAsDraft: true and forwards it to the backend body", async () => {
+    const { stub, calls } = makeClientStub({
+      "POST /customer/tasks": { uuid: "00000000-0000-0000-0000-000000000001" },
+    });
     const { server, invoke } = makeServerStub();
     registerTaskTools(server, stub as never);
 
-    await expect(
-      invoke("createTask", {
-        title: "test",
-        description: "x",
-        workerId: 1,
-        categoryId: 1,
-        price: 1,
-        deadline: "2026-12-31T00:00:00+00:00",
-        createType: "draft",
-      }),
-    ).rejects.toThrow(/createType/);
+    await invoke("createTask", {
+      title: "test draft opt-in",
+      description: "x",
+      workerId: 1,
+      categoryId: 1,
+      price: 1,
+      deadline: "2026-12-31T00:00:00+00:00",
+      createAsDraft: true,
+    });
+
+    const body = calls[0].body as Record<string, unknown>;
+    expect(body.createAsDraft).toBe(true);
   });
 
-  it("rejects legacy acceptanceFileTemplateIds with rename hint", async () => {
+  it("still rejects legacy acceptanceFileTemplateIds with rename hint", async () => {
     const { stub } = makeClientStub({});
     const { server, invoke } = makeServerStub();
     registerTaskTools(server, stub as never);

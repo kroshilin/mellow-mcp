@@ -114,10 +114,10 @@ Customer-side transitions you can trigger:
 - \`acceptTask\` → RESULT → FOR_PAYMENT (does NOT pay)
 - \`payForTask\` → FOR_PAYMENT → PAYMENT_QUEUED (pre-check balance!)
 - \`resumeTask\` → RESULT → IN_WORK (return for rework)
-- \`declineTask\` → only WAITING_DECLINE_BY_WORKER → DECLINED_BY_CUSTOMER
+- \`declineTask\` → soft cancel to DECLINED_BY_CUSTOMER. Direct from NEW(1) / DRAFT(17). From RESULT(3) / FOR_PAYMENT(4): only via WAITING_DECLINE_BY_WORKER(11) (freelancer initiates).
 - \`changeDeadline\` → only WAITING_FOR_CUSTOMER_DEADLINE_DECISION
 
-There is **no** customer-side single-call cancel for live NEW/IN_WORK tasks. There is **no** API to delete a DRAFT.
+\`declineTask\` is the soft cancel — direct from NEW/DRAFT, two-step (via WAITING_DECLINE_BY_WORKER) from RESULT/FOR_PAYMENT, not available from IN_WORK (ask the freelancer to start a decline first). There is **no** hard-delete API anywhere — declined tasks remain visible in \`listTasks\` with state 8.
 
 ## Two-step payment (critical)
 
@@ -136,7 +136,9 @@ If balance is insufficient: HTTP 400 → task stays in current state, no async r
 - \`deadline\`: ISO-8601 with explicit timezone.
 - \`title\`: only special chars \`- , . : ; ( ) _ " № % # @ ^ « »\`. Em-dash (—) → 422.
 - \`workerCurrency\`: ISO string (USD/EUR/RUB/KZT) — must be in \`getAllowedCurrencies()\`.
-- Balance gate: if the company balance does not cover the task cost, \`createTask\` silently saves the task as \`DRAFT\` instead of publishing it as \`NEW\` — no error is raised. Pre-check via \`getCompanyBalance\`, and verify the resulting state with \`getTask(uuid)\` after create. There is no \`createType\` flag on this endpoint.
+- Initial state — two scenarios:
+  - **Implicit (no \`createAsDraft\`)** — balance gate: backend lands the task in \`NEW(1)\` when the balance covers it, else **silently** in \`DRAFT(17)\` (no warning). Pre-check via \`getCompanyBalance\`; always verify final state via \`getTask(uuid)\`.
+  - **Explicit \`createAsDraft: true\`** — backend creates the task as \`DRAFT(17)\` regardless of balance (balance is NOT checked). Use this when the user says "save as draft" / "let me review first" on a funded company.
 - \`checkTaskRequirements\` runs AFTER createTask — the task UUID must already exist before you can pre-check freelancer requirements.
 - For idempotent retries: use \`externalId\` + \`listTasks(filter[externalId]=...)\` to detect prior success. \`uuid\` is **NOT** an idempotency key — duplicates return 400.
 
@@ -181,7 +183,7 @@ not_verified → verification_in_progress → active        ← happy path
 ## Top mistakes to avoid
 
 1. Calling \`acceptTask\` and reporting "paid" — payment is a separate \`payForTask\` step.
-2. Calling \`declineTask\` to cancel a live task — only valid from WAITING_DECLINE_BY_WORKER (11), returns 403 from any other state.
+2. Skipping \`declineTask\` for a NEW or DRAFT task that the user wants to cancel — it works directly from those states (one-call soft cancel to DECLINED_BY_CUSTOMER). The "wrong state" trap is only for IN_WORK and beyond, where the freelancer must initiate the decline first.
 3. Re-using a task \`uuid\` on retry — that's not an idempotency key, returns 400. Use \`externalId\` instead.
 4. Treating \`listTasks\` as read-your-writes — it is search-index backed, several seconds of eventual consistency. For just-created tasks fetch by \`getTask(uuid)\`.
 5. Calling \`removeFreelancer\` while open tasks exist — backend returns 422 "Worker have not finished tasks". Surface the blocking task list to the user first.

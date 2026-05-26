@@ -1,4 +1,4 @@
-# Mellow & Scout — Agent Anti-patterns
+# Mellow — Agent Anti-patterns
 
 > Catalog of common mistakes LLM agents make when driving the MCP, with corrected patterns. Read before producing tool calls. Each entry: **Bad** (what agents naively do) → **Why** (what breaks) → **Good** (the correct shape).
 >
@@ -29,21 +29,23 @@ poll getTask(uuid) until FINISHED
 
 ---
 
-### A2 — Calling `declineTask` to cancel a live task
+### A2 — Refusing to cancel a NEW or DRAFT task (false negative)
 
 **Bad**
 
 ```
-// Task is in NEW or IN_WORK; user says "cancel this".
-declineTask({taskId})
+// Task is in NEW or DRAFT; user says "cancel this".
+// Agent: "Mellow doesn't support cancelling tasks via API."
 ```
 
-**Why** — `declineTask` is **only** valid from `WAITING_DECLINE_BY_WORKER (11)`. From `NEW`, `IN_WORK`, `DRAFT`, or any other state it returns **HTTP 403 "Access Denied"** (verified on prod 2026-05-21). There is **no** customer-side single-call cancel anywhere in the API.
+**Why** — `declineTask` IS the customer-side soft cancel and it works directly from `DRAFT (17)` and `NEW (1)` — single call, transitions to `DECLINED_BY_CUSTOMER (8)`. The agent that refuses here is hallucinating a non-existent limitation. (The limitation is real for `IN_WORK` and later, where the freelancer must initiate the decline first — but not for NEW/DRAFT.)
 
 **Good**
 
-- Tell the user that the only paths are: (a) ask the freelancer to start a decline → then `declineTask`, or (b) open a dispute (not via this MCP).
-- Never silently retry `declineTask` after it 403s.
+- For `NEW` or `DRAFT`: confirm intent with the user, then `declineTask({uuid})`. One call.
+- For `IN_WORK (2)` / `RESULT (3)` / `FOR_PAYMENT (4)`: ask the freelancer to start a decline (their side moves the task to `WAITING_DECLINE_BY_WORKER (11)`) → then `declineTask` confirms. Or open a dispute (out of MCP).
+- For `WAITING_DECLINE_BY_WORKER (11)`: `declineTask` confirms what the freelancer initiated.
+- Always tell the user that cancellation is **soft** — the task stays visible in `listTasks` with `state: 8 DECLINED_BY_CUSTOMER`. There is no hard-delete API.
 
 ---
 
@@ -77,19 +79,23 @@ changeDeadline({uuid, deadline: '2026-06-01T00:00:00Z'})
 
 ---
 
-### A5 — Trying to delete or cancel a `DRAFT`
+### A5 — Confusing soft cancel with hard delete
 
 **Bad**
 
 ```
-// User says "discard this draft".
-declineTask({taskId})
-// or hunting for a deleteDraftTask tool that doesn't exist
+// User says "delete this task" or "discard this draft".
+// Agent: "Mellow doesn't support deleting tasks via API." (refuses)
+// Or worse: agent calls declineTask and reports "task deleted".
 ```
 
-**Why** — there is **no** API for cancelling or deleting a `DRAFT (17)` — confirmed by the backend team. Drafts simply persist until published.
+**Why** — there is no **hard-delete** API anywhere (confirmed by backend). But `declineTask` works as a **soft cancel** from `DRAFT (17)` and `NEW (1)` (single call) and from `WAITING_DECLINE_BY_WORKER (11)` (confirming a freelancer-initiated decline). The task moves to `DECLINED_BY_CUSTOMER (8)` — a terminal state — and stays visible in `listTasks` with that state.
 
-**Good** — tell the user the draft will stay; just don't publish it. If they want it gone from listings, that's a backend support ticket.
+**Good**
+
+- If the user really wants the task gone from listings: explain that hard delete is not exposed; their best option is `declineTask`, which terminates the task but leaves the record. For full removal they'd need a backend support ticket.
+- If the user wants to "cancel" or "discard": call `declineTask` on `DRAFT` / `NEW` directly. Confirm with the user that the record will remain visible in listings as `DECLINED_BY_CUSTOMER`.
+- Don't report "deleted" — report "cancelled (soft); record stays in listings".
 
 ---
 
@@ -293,15 +299,18 @@ createTask({title, description, workerId, ...})
 // Reality: task is in DRAFT — the freelancer cannot see it
 ```
 
-**Why** — `createTask` does not fail when the company balance is too low. It silently saves the task as DRAFT instead of publishing it. No error is returned. The agent reports success to the user; the user comes back hours or days later asking why the freelancer never responded — because the task was never actually published.
+**Why** — `createTask` does not fail when the company balance is too low. Without `createAsDraft`, it silently saves the task as DRAFT instead of publishing it. No error or warning is returned. The agent reports success to the user; the user comes back hours or days later asking why the freelancer never responded — because the task was never actually published.
 
 **Good**
 
-1. Call `getCompanyBalance` first.
-2. If the balance does not cover the task cost, tell the user to top up at https://my.mellow.io/ → Finances → Top up balance (full flow in `mellow://domain` § "Topping up the balance"). Stop — do not call `createTask` until the top-up clears.
-3. After `createTask`, always call `getTask(uuid)` to read the actual state.
-4. If state is **DRAFT**, the balance was short: wait for the user to top up, then call `publishDraftTask`.
-5. If state is **NEW**, the task is published — the freelancer can see and accept it.
+1. **Decide the intent first.** Did the user say "save as draft / let me review first" or "publish to the freelancer"?
+   - **Draft on purpose** → pass `createAsDraft: true`. Balance is NOT checked — the task lands as DRAFT every time.
+   - **Publish** → omit `createAsDraft`; pre-check `getCompanyBalance` to predict whether the balance gate will downgrade to DRAFT.
+2. If publishing and the balance does not cover the task cost, tell the user to top up at https://my.mellow.io/ → Finances → Top up balance (full flow in `mellow://domain` § "Topping up the balance"). Stop — do not call `createTask` until the top-up clears.
+3. `createTask({..., createAsDraft?})`.
+4. **Always** call `getTask(uuid)` after create to read the actual state — never trust the create call alone. Tell the user what landed:
+   - **NEW** — published; freelancer can see and accept.
+   - **DRAFT** — either the user asked for it (intentional, `createAsDraft: true`) or the balance gate caught it (unintentional — say so explicitly and recommend top-up + `publishDraftTask`).
 
 ---
 
@@ -723,13 +732,86 @@ changeTaxationStatus(...)      // removed
 
 ---
 
+## M. F2B traps (freelancer mode)
+
+### M1 — Calling `f2b_sendInvoiceDraft` without showing the breakdown to the user
+
+**Bad**
+
+```
+// User said "issue the invoice and send it".
+f2b_createInvoiceDraft({...})
+f2b_sendInvoiceDraft({invoiceId})  // immediately after create
+```
+
+**Why** — the two-step send is **mandatory** by design (see DOMAIN §10.4). The draft response carries `breakdown: {subtotal, commissionPercent, commissionAmount, total, payable}` — the agent is supposed to surface that to the user and get a confirming "yes" before sending. Once `sendInvoiceDraft` returns, the email is in the client's inbox; the only recovery is `f2b_cancelInvoice`, which also pings the client.
+
+**Good** — even when the user says "create and send", still pause between calls. Show the breakdown ("subtotal €X, commission Y% = €Z paid by {you|client}, total €T, payable to you €P") and ask "send?" before the second call. There is **no** `f2b_createAndSendInvoice` shortcut. Do not invent one.
+
+---
+
+### M2 — Hard-coding the commission percentage
+
+**Bad**
+
+```ts
+const total = subtotal * 1.05; // assume 5%
+```
+
+**Why** — commission rate is a backend-controlled value returned in `breakdown.commissionPercent` on every draft. It can change (e.g. when card-payment is re-enabled, the rate becomes payment-method-dependent). A hard-coded 5% will silently mislead users the day the rate changes.
+
+**Good** — read `breakdown.commissionPercent` and `breakdown.commissionAmount` from the `f2b_createInvoiceDraft` response. Render those numbers verbatim.
+
+---
+
+### M3 — Treating `f2b_archiveClient` as a hard delete
+
+**Bad**
+
+```
+// User said "I won't work with this client again, remove them".
+f2b_archiveClient({clientId})
+// then assumes the existing sent invoices stop working
+```
+
+**Why** — archive is a soft state. Already-sent invoices keep working (client can still pay). New `createInvoiceDraft` against the archived client is rejected with 422. There is **no** un-archive endpoint — to re-engage, create a brand-new client record.
+
+**Good** — confirm with the user the asymmetric behavior: archive blocks new invoices but keeps existing ones live. Mention there's no undo.
+
+---
+
+### M4 — Quick wins
+
+These come up often but don't deserve a full Bad/Why/Good walkthrough:
+
+- **Trying to invoice an individual.** Only `type=legal` (companies) is supported. F2B does not accept payments from individuals; the schema doesn't expose `type`. Point the user at local invoicing tools instead.
+- **Backend-side filters that don't exist.** `f2b_listClients` and `f2b_listInvoices` accept `status` + pagination only — no `clientId` / `email` / `companyName` / date-range filters. Page through results and filter MCP-side.
+
+---
+
+### M5 — Promising withdrawals, tax docs, or Offers from this MCP
+
+**Bad**
+
+```
+// User: "Withdraw my balance to my card"
+// Agent looks for a withdraw tool, finds none, hallucinates one.
+```
+
+**Why** — these are real Mellow capabilities but **not exposed by this MCP** (see DOMAIN §10.7). They live in the web cabinet only.
+
+**Good** — direct the user to https://my.mellow.io/ for: withdrawals (bank / card / wallet / crypto), tax document downloads, and Offers (Secure Deal escrow product).
+
+---
+
 ## L. Quick checklist (read before every mutating call)
 
 - [ ] Did I confirm intent with the user using the entity ID and tool name?
-- [ ] Did I read current state via `getTask` / `getCompanyBalance` / `scout_getPosition`?
+- [ ] Did I read current state via `getTask` / `getCompanyBalance` / `scout_getPosition` / `f2b_getInvoice`?
 - [ ] Is the state legal for this transition?
-- [ ] If money is involved: did I pre-check the balance?
-- [ ] If `createTask`: are all required fields user-provided (no inventions)?
-- [ ] If retrying: did I check `externalId` via `listTasks` first?
-- [ ] If multi-company: am I sure which company is active?
+- [ ] If money is involved: did I pre-check the balance (company mode) or surface the breakdown (F2B send)?
+- [ ] If `createTask` / `f2b_createInvoiceDraft`: are all required fields user-provided (no inventions)?
+- [ ] If `f2b_sendInvoiceDraft`: did I just show the user the breakdown and get an explicit "yes"?
+- [ ] If retrying: did I check `externalId` via `listTasks` first (CoR) or `f2b_getInvoice` to avoid duplicate sends (F2B)?
+- [ ] If multi-company (company mode): am I sure which company is active?
 - [ ] If 4xx: did I capture `X-Trace-Id`?
