@@ -165,7 +165,9 @@ app.get("/callback", async (c) => {
     },
   });
   if (!userResponse.ok) {
-    return c.text("Failed to fetch user info with JWT " + tokens.accessToken, 500);
+    // Never include the access token (or a derivative — hash, prefix, etc.)
+    // in the response body or logs. OAuth credentials must not leak.
+    return c.text("Failed to fetch user info from upstream", 500);
   }
   const { sub, name, email } = (await userResponse.json()) as { sub: string; name: string; email: string };
 

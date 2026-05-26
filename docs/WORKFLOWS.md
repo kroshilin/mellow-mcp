@@ -1,6 +1,6 @@
-# Mellow & Scout — End-to-End Workflows
+# Mellow — End-to-End Workflows
 
-> Real user-goal recipes built on top of the decision trees in `DOMAIN.md` §12. Each recipe assumes the agent has read the rest of `DOMAIN.md` and knows the state machines, preconditions, and error-handling rules.
+> Real user-goal recipes built on top of the decision trees in `DOMAIN.md` §9. Each recipe assumes the agent has read the rest of `DOMAIN.md` and knows the state machines, preconditions, and error-handling rules.
 >
 > Format per recipe: **Goal** → **Preconditions** → **Steps** (concrete MCP tool calls with branches) → **Error handling** → **Done when**.
 >
@@ -30,7 +30,10 @@
    - `getTaskAttributes()` — fetch the catalog and filter client-side by category to find the 3 mandatory attributes.
    - currency: if non-default, `getAllowedCurrencies()` to verify it's permitted.
    - **Title character whitelist:** only `- , . : ; ( ) _ " № % # @ ^ « »` are allowed as special characters. Em-dash (`—`), en-dash (`–`), and other Unicode punctuation are rejected with HTTP 422. Replace with a hyphen-minus before sending.
-4. **Create the task.** `createTask({title, description, workerId, categoryId, price, deadline, attributes, workerCurrency?, externalId?})` returns `{uuid}` only. The backend picks the initial state from the company balance: `NEW (1)` if `available ≥ priceWithCommission`, `DRAFT (17)` otherwise — silently, no error. There is no `createType` flag. Always call `getTask(uuid)` next to read the actual `state`.
+4. **Create the task.** `createTask({title, description, workerId, categoryId, price, deadline, attributes, workerCurrency?, externalId?, createAsDraft?})` returns `{uuid}` only.
+   - **Default (no `createAsDraft`)** — balance gate: `NEW (1)` if `available ≥ priceWithCommission`, otherwise **silently** downgraded to `DRAFT (17)` (no warning).
+   - **`createAsDraft: true`** — explicit DRAFT regardless of balance; balance is NOT checked. Use this when the user asked to review before publishing on a funded company.
+   - **Always** call `getTask(uuid)` next to read the actual `state` and tell the user honestly which scenario landed (especially important without `createAsDraft` — the silent downgrade is the canonical source of "why didn't the freelancer see it" confusion).
 5. **Pre-check requirements** (now possible because the task exists):
    `checkTaskRequirements({taskUuid, freelancerUuid})`.
    - Empty list → freelancer can accept right away.
@@ -195,10 +198,8 @@
 
 **Error handling:**
 
-- Customer wants to cancel a task that is in `1 NEW` or `2 IN_WORK`, not `11`. There is **no direct customer-side cancel** for these states. Tell the user the only paths are:
-  (a) ask the freelancer to start a decline → then run this recipe, or
-  (b) open a dispute (not via this MCP).
-  Do not attempt `declineTask` from these states — current backend returns **HTTP 403 "Access Denied"** (not 400/422). Treat 403 here as "wrong state", not as a permissions error, before falling through to the generic permissions handler.
+- If the task is in `1 NEW` or `17 DRAFT`, this recipe doesn't apply — use Recipe 17 (direct soft cancel) instead. `declineTask` works from those states without freelancer involvement.
+- If the task is in `2 IN_WORK` / `3 RESULT` / `4 FOR_PAYMENT`: the customer cannot decline directly; backend returns 403 "wrong state". The freelancer must start the decline first (their side moves it to `11`) — then this recipe applies. Or open a dispute (out of MCP).
 
 **Done when:** task is `8 DECLINED_BY_CUSTOMER`.
 
@@ -516,18 +517,18 @@
    - **Pre-check the company balance.** `publishDraftTask` requires `balanceAmount ≥ Σ priceWithCommission` of all tasks to be published — same backend behavior as Recipe 1. Call `getCompanyBalance()` once before the publish loop. If the available balance is below the cumulative cost of the planned batch, tell the user "top up first" and stop the publish loop.
    - Loop `publishDraftTask({uuid: taskUuid})` for each created draft (same pacing). `companyId` is optional — defaults to the active company.
    - On HTTP 409 "Top-up your balance" mid-loop: stop, surface what published vs what didn't, ask the user to top up and resume the loop on the remaining drafts.
-   - The user may reject some drafts before publishing (skip from the publish loop). DRAFT tasks cannot be deleted via this MCP — they will simply persist.
+   - The user may reject some drafts before publishing (skip from the publish loop). To discard a draft, use `declineTask({uuid})` — moves it to `DECLINED_BY_CUSTOMER (8)` (Recipe 17). Hard delete is not exposed.
 
 10. **Final confirmation.** Tell the user:
     - N tasks published (now visible to freelancers in `NEW` state).
-    - M drafts kept (user chose not to publish; can publish later or delete is not supported by MCP — they'll persist as DRAFT).
+    - M drafts kept (can publish later via `publishDraftTask`, or cancel via `declineTask` — Recipe 17).
     - K rows failed (with reasons).
 
 **Error handling:**
 
 - **Partial-failure semantics.** Bulk import is NOT atomic. Earlier successes are real. Use the per-row report to retry only failed rows (idempotent thanks to `externalId` — re-running for the same `externalId` will be detected by `listTasks(filter[externalId]=...)` and skipped if already created).
 - **OpenSearch lag.** Right after a bulk create, `listTasks` may not show all tasks immediately. For verification, fetch each by `getTask(uuid)`.
-- **Drafts without delete.** This MCP does not expose draft deletion. If the user wants to discard a row mid-flight, just don't publish it — but the DRAFT will persist.
+- **Discarding drafts.** Use `declineTask({uuid})` to soft-cancel a draft (moves it to `DECLINED_BY_CUSTOMER (8)`; record persists in listings). Hard delete is not exposed by the API.
 - **Mixed-currency batches.** Different `workerCurrency` per row is fine; the locked-rate semantics (Recipe 7) apply per task.
 - **There are no bulk-import endpoints on the backend.** Confirmed by the API team. Row-by-row is the canonical path — agents should not try to find a `POST .../import` endpoint.
 
@@ -552,6 +553,104 @@
 7. If the user wants a re-run later → `scout_requestMatching({positionId})`. Handle 409 (in progress) and 429 (rate limit). After the re-run is accepted → back to step 1.
 
 **Done when:** the user either invites a candidate (success), exhausts matches (offer to widen the position), or matching failed (retry available).
+
+---
+
+## Recipe 14 — F2B: add an external client and issue the first invoice (freelancer mode)
+
+**User goal:** "I just finished a job for an external company. Let me bill them through Mellow."
+
+**Preconditions:**
+
+- Session is in freelancer mode (`f2b_*` tools registered; `tasks`/`scout_*` not).
+- Freelancer has completed their own Mellow onboarding (agreement signed).
+- Freelancer knows the client's company email at minimum (other fields nice-to-have).
+
+**Sequence:**
+
+1. **Skip if already known.** `f2b_listClients({})` → if the company is already in the list, jump to step 4 with that `clientId`.
+2. **Confirm fields with the user** (recommendation mode — don't invent):
+   - `email` (where the payment link goes), `country` (ISO-3166 alpha-2), `currency` (`EUR` or `USD`).
+   - Optional: `companyName`, `regNumber`, `vat`, `tin`, address fields.
+3. **`f2b_createClient({email, country, currency, companyName?, ...})`**. Returns the new client object. Record `clientId`. State starts `not_verified` — that does **not** block invoicing.
+4. **Collect invoice inputs from the user:**
+   - `serviceId` (from Mellow's service taxonomy — pass the leaf service id).
+   - `serviceName` (short, no HTML), `serviceStartDate` + `serviceEndDate` (ISO).
+   - `invoiceDate` (must be ≤ today).
+   - `lineItems[]` (1-10 items, each `{name, quantity, measure, price}`; total ≤ 10 000 in client currency).
+   - `commissionPayer` (`freelancer` deducts from payable; `customer` adds to total).
+5. **`f2b_createInvoiceDraft({clientId, ...})`** — draft only, NO email sent. Response includes `breakdown: {subtotal, commissionPercent, commissionAmount, total, payable}`. Record `invoiceId`.
+6. **Show the breakdown to the user.** Restate: who, how much subtotal, commission %, who pays it, total, payable. Get an explicit "yes".
+7. On confirmation: **`f2b_sendInvoiceDraft({invoiceId})`** — backend emails the client + exposes the public `paymentUrl`. Status moves `new → sent`.
+
+**Error handling:** see DOMAIN §8.1 for generic error semantics and ANTI_PATTERNS §M for F2B-specific traps. 422 bodies carry a field→error map — render as-is. On a network blip between create-draft and send, never re-create the draft as a retry (would duplicate) — call `f2b_getInvoice({invoiceId})` to confirm the existing draft's status first.
+
+**Done when:** `f2b_getInvoice({invoiceId})` reports `status: sent` with a populated `paymentUrl`. Tell the user the email is in their client's inbox.
+
+---
+
+## Recipe 15 — F2B: track payment status
+
+**User goal:** "Did my client pay invoice #N yet?"
+
+**Preconditions:** invoice exists in `sent` / `payment_queued` / `paid`.
+
+**Sequence:**
+
+1. `f2b_getInvoice({invoiceId})` — read `status`:
+   - `sent` — email delivered; client has not initiated payment yet (or is still in 10-15 min verification on first payment).
+   - `payment_queued` — client kicked off the payment; settlement in flight.
+   - `paid` — funds on the freelancer's Mellow balance.
+2. If user wants to see all open invoices for the client: `f2b_listInvoices({status: ['sent', 'payment_queued']})` and MCP-side filter by `clientId` (backend doesn't support a `clientId` filter).
+
+**"How do I withdraw?"** — out of scope. Direct user to https://my.mellow.io/ → Finances → Withdraw.
+
+**Done when:** the user knows the current status.
+
+---
+
+## Recipe 16 — F2B: cancel a sent invoice
+
+**User goal:** "I sent the wrong invoice — cancel it and let me re-issue."
+
+**Preconditions:** invoice is in `new` or `sent`. Any other state → 422.
+
+**Sequence:**
+
+1. **Pre-check.** `f2b_getInvoice({invoiceId})` — confirm `status in {new, sent}`. If not, tell the user it can't be cancelled (paid invoices need a refund flow outside this MCP).
+2. **Confirm with the user explicitly.** State the invoice id, client name, total, and that the client will get a cancellation email. Get a "yes".
+3. **`f2b_cancelInvoice({invoiceId})`** — backend sets `status: cancelled` + sends cancellation email to client.
+4. (Optional) re-issue: jump to Recipe 14 step 4 with a corrected line-item set.
+
+**Error handling:**
+
+- 422 on wrong state — tell the user the current `status` and that cancellation is not possible from this state.
+
+**Done when:** `f2b_getInvoice` shows `status: cancelled` and the user has decided whether to re-issue.
+
+---
+
+## Recipe 17 — Cancel a task (NEW or DRAFT) — direct soft cancel
+
+**User goal:** "I changed my mind / made it by mistake — cancel this task before the freelancer engages."
+
+**Preconditions:**
+
+- Task is in state `1 NEW` or `17 DRAFT`. (For `IN_WORK` / `RESULT` / `FOR_PAYMENT`: use Recipe 5 instead — the freelancer must initiate the decline first.)
+- The agent has the task's `uuid` (or numeric `taskId`).
+
+**Sequence:**
+
+1. `getTask({uuid})` → confirm `state in {1, 17}`. If not, point the user at Recipe 5 (decline confirmation) or tell them cancellation is not available from this state.
+2. Show the user what they're about to cancel — title, freelancer, price, current state. Get explicit confirmation. Mention that the cancel is **soft**: the task moves to `DECLINED_BY_CUSTOMER (8)` and stays visible in `listTasks` with that state. There is no hard-delete.
+3. On confirmation: `declineTask({uuid})` → state moves to `8 DECLINED_BY_CUSTOMER`. Any held funds are released automatically (no funds held for NEW/DRAFT in the first place).
+4. Read `getTask({uuid})` to verify the state actually moved. Report the new state honestly.
+
+**Error handling:**
+
+- 422 / 403 on `declineTask`: the backend's `canBeDeclinedByCustomer` flag was false (rare edge case, e.g. task already terminal). Re-read `getTask` and reconcile.
+
+**Done when:** task is `8 DECLINED_BY_CUSTOMER` and the user knows the record persists in listings.
 
 ---
 

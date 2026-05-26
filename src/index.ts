@@ -30,6 +30,7 @@ import { registerScoutPositionTools } from "./tools/scout/positions";
 import { registerScoutPromoPostTools } from "./tools/scout/promo-posts";
 import { registerF2bClientTools } from "./tools/f2b/clients";
 import { registerF2bInvoiceTools } from "./tools/f2b/invoices";
+import { registerCompanyPrompts, registerFreelancerPrompts } from "./prompts";
 import { refreshUpstreamToken, type Props } from "./utils";
 
 export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
@@ -80,6 +81,8 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
         registerScoutCompanyTools(this.server, scoutClient);
         registerScoutLookupTools(this.server, scoutClient);
         registerMatchedFreelancersTools(this.server, scoutClient);
+
+        registerCompanyPrompts(this.server);
       }
 
       if (userRole === "freelancer") {
@@ -89,6 +92,8 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
         registerF2bClientTools(this.server, client);
         registerF2bInvoiceTools(this.server, client);
         registerProfileTools(this.server, client);
+
+        registerFreelancerPrompts(this.server);
       }
 
       // MCP resources — full reference docs the agent can read on demand.
