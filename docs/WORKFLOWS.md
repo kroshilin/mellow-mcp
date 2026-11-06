@@ -569,18 +569,19 @@
 **Sequence:**
 
 1. **Skip if already known.** `f2b_listClients({})` → if the company is already in the list, jump to step 4 with that `clientId`.
-2. **Confirm fields with the user** (recommendation mode — don't invent):
-   - `email` (where the payment link goes), `country` (ISO-3166 alpha-2), `currency` (`EUR` or `USD`).
-   - Optional: `companyName`, `regNumber`, `vat`, `tin`, address fields.
-3. **`f2b_createClient({email, country, currency, companyName?, ...})`**. Returns the new client object. Record `clientId`. State starts `not_verified` — that does **not** block invoicing.
+2. **Ask the user for exactly four fields** (the cabinet form's fields — don't invent, don't ask for more):
+   - `companyName`, `email` (where the payment link goes), `country` (ISO-3166 alpha-2), `currency` (`EUR` or `USD`).
+   - Do NOT ask for VAT / TIN / registration number / address — the client fills those in on the payment page.
+3. **`f2b_createClient({companyName, email, country, currency})`**. Returns the new client object. Record `clientId`. State starts `not_verified` — that does **not** block invoicing.
 4. **Collect invoice inputs from the user:**
-   - `serviceId` (from Mellow's service taxonomy — pass the leaf service id).
-   - `serviceName` (short, no HTML), `serviceStartDate` + `serviceEndDate` (ISO).
+   - service → `serviceId`: offer the service of a previous invoice if the user has one (`f2b_listInvoices` → `service`), otherwise `f2b_searchServices({search: '<key word>'})` and confirm the match. Never send the user to the cabinet to look up an id.
+   - `serviceName` (invoice title, no HTML).
+   - work period `serviceStartDate` + `serviceEndDate` (ISO) — when the work was done; NOT a due date.
    - `invoiceDate` (must be ≤ today).
    - `lineItems[]` (1-10 items, each `{name, quantity, measure, price}`; total ≤ 10 000 in client currency).
-   - `commissionPayer` (`freelancer` deducts from payable; `customer` adds to total).
-5. **`f2b_createInvoiceDraft({clientId, ...})`** — draft only, NO email sent. Response includes `breakdown: {subtotal, commissionPercent, commissionAmount, total, payable}`. Record `invoiceId`.
-6. **Show the breakdown to the user.** Restate: who, how much subtotal, commission %, who pays it, total, payable. Get an explicit "yes".
+   - `commissionPayer` (who pays the 5%) and whether card payment is allowed (`acquiringEnabled`; the 3% card fee is always on the client).
+5. **`f2b_createInvoiceDraft({clientId, ...})`** — draft only, NO email sent. Record `invoiceId`.
+6. **`f2b_calculateInvoiceCost({invoiceId})`** and show the user, per payment method, what the client pays (`cost`) and what they receive (`received`). Never compute these yourself. Get an explicit "yes".
 7. On confirmation: **`f2b_sendInvoiceDraft({invoiceId})`** — backend emails the client + exposes the public `paymentUrl`. Status moves `new → sent`.
 
 **Error handling:** see DOMAIN §8.1 for generic error semantics and ANTI_PATTERNS §M for F2B-specific traps. 422 bodies carry a field→error map — render as-is. On a network blip between create-draft and send, never re-create the draft as a retry (would duplicate) — call `f2b_getInvoice({invoiceId})` to confirm the existing draft's status first.

@@ -452,7 +452,7 @@ Cancellation is always soft — the task remains visible in listTasks with `stat
 
 **"What is Mellow / how does it work for me?"** — describe the legal-intermediary model (see §10.1) in plain language, then list workflow capabilities (manage clients, issue invoices, track payment, cancel). Never enumerate tool names.
 
-**"Add a new client"** → `f2b_createClient({email, country, currency: 'EUR'|'USD', companyName?, regNumber?, vat?, ...})`. Confirm currency choice with the user — it cannot be changed later. Only `legal` clients (companies) are supported; do not attempt individuals.
+**"Add a new client"** → `f2b_createClient({companyName, email, country, currency: 'EUR'|'USD'})` — the same four fields as the cabinet form. Do not ask for VAT / TIN / registration number / address: the client enters them on the payment page ("Confirm details"). Confirm currency choice with the user — it cannot be changed later. Only `legal` clients (companies) for classic invoices.
 
 **"List my clients"** → `f2b_listClients({status?, page?})`. Filter MCP-side for company-name search (backend supports only `status` filter).
 
@@ -463,20 +463,28 @@ Cancellation is always soft — the task remains visible in listTasks with `stat
 **"Invoice a client for work"** — single user-intent, mandatory two MCP calls:
 
 ```
-→ f2b_createInvoiceDraft({clientId, serviceId, lineItems, commissionPayer, invoiceDate, ...})
-  ← response includes breakdown {subtotal, commissionPercent, commissionAmount, total, payable}
-→ (dialog) Show the breakdown to the user. Get explicit "yes".
+→ f2b_searchServices({search}) or reuse service.id of a previous invoice
+→ f2b_createInvoiceDraft({clientId, serviceId, serviceName, serviceStartDate, serviceEndDate, invoiceDate, lineItems, commissionPayer, acquiringEnabled?})
+→ f2b_calculateInvoiceCost({invoiceId})
+  ← rows per payment method: received ('You receive'), cost (client pays), commission, card fee
+→ (dialog) Show client total + 'You receive'. Get explicit "yes".
 → f2b_sendInvoiceDraft({invoiceId})
   ← client receives email with the payment link, status moves to 'sent'
 ```
 
-Never call `sendInvoiceDraft` without first surfacing the breakdown from the draft. There is intentionally no one-shot `createAndSend`.
+Never call `sendInvoiceDraft` without first surfacing the calculation. There is intentionally no one-shot `createAndSend`.
 
-**"Cancel an invoice"** → `f2b_cancelInvoice({invoiceId})`. Allowed only from `new` or `sent`. Backend returns 422 for any other state (`paid`, `cancelled`, `payment_queued`). The client gets notified of the cancellation.
+**"How much will I get?"** → `f2b_calculateInvoiceCost` (existing invoice: `{invoiceId}`; estimate: `{clientId, commissionPayer, lineItems | amount}`). Never compute.
+
+**"Change invoice X"** → `f2b_updateInvoice({invoiceId, ...changedFields})`. **"Duplicate / same as last time / for another client"** → `f2b_duplicateInvoice({invoiceId, ...overrides})`. Neither cancels anything.
+
+**"Cancel / delete an invoice"** → confirm first (number, client, amount, "the client will be notified"), then `f2b_cancelInvoice({invoiceId})`. Allowed only from `new` or `sent`. There is no hard delete.
+
+**"My balance" / "exchange rate"** → `getBalance()` / `getExchangeRate()`.
 
 **"Track payment"** → `f2b_getInvoice({invoiceId})`. Inspect `status` (`new` → `sent` → `payment_queued` → `paid`). For lists: `f2b_listInvoices({status?, page?})`.
 
-**"Withdraw funds" / "Get tax docs" / "Use Offers / Secure Deal"** → out of scope for this MCP. Direct the user to https://my.mellow.io/.
+**"Withdraw funds" / "Acts or payout invoices for CoR work" / "Use Offers / Secure Deal"** → out of scope for this MCP. Direct the user to https://my.mellow.io/. CoR acts and payout invoices are not F2B invoices — never substitute one for the other.
 
 ---
 
@@ -520,22 +528,27 @@ new → sent → payment_queued → paid
 - **`paid`** — funds on the freelancer's Mellow balance (90% within minutes; up to 6 business days for extra checks).
 - **`cancelled`** — only reachable from `new` or `sent` via `f2b_cancelInvoice`. The client gets an email notification.
 
-There is **no** edit-invoice endpoint. For a corrected version: cancel, then create a new draft.
+**Editing:** `f2b_updateInvoice` edits the invoice in place (`PUT /freelancer/f2b/v2/invoices`, full payload — the tool merges the changed fields over the stored invoice). Allowed in `new` and `sent` while no card payment is authorized; the client cannot be changed. Editing a `sent` invoice emails the client an "invoice updated" notice (debounced to once per 30 min). Never cancel-and-recreate to correct an invoice.
+
+**Duplicating:** there is no backend duplicate endpoint (the cabinet just pre-fills the create form). `f2b_duplicateInvoice` reads the invoice and creates a new `new` draft with its fields plus overrides (client, line items, dates, …). The original is untouched.
+
+**Work period** (`serviceStartDate`/`serviceEndDate`) is printed as "Period from … to …" on the invoice PDF. It is the period in which the work was performed — F2B invoices have no due date.
 
 ### 10.4 Two-step send invariant (CRITICAL)
 
-`f2b_createInvoiceDraft` → user confirms breakdown → `f2b_sendInvoiceDraft`. Always two MCP calls. The agent must show the breakdown returned by the draft (subtotal, commissionPercent, commissionAmount, total, payable) to the user and get an explicit "yes" before sending. Once sent, the email is in the client's inbox; the only recovery is `f2b_cancelInvoice` (which also notifies the client).
+`f2b_createInvoiceDraft` → `f2b_calculateInvoiceCost({invoiceId})` → user confirms → `f2b_sendInvoiceDraft`. The agent must show the client total (`cost`) and 'You receive' (`received`) from the calculation and get an explicit "yes" before sending. Once sent, the email is in the client's inbox.
 
 There is **no** `f2b_createAndSendInvoice`. Do not invent one.
 
-### 10.5 Commissions
+### 10.5 Money: commission and card fee
 
 Mellow takes a service fee on each invoice paid. Fee payer is chosen per invoice and **cannot be split**:
 
-- `commissionPayer: 'freelancer'` → fee deducted from `payable`; client sees a clean total.
-- `commissionPayer: 'customer'` → fee added to `total`; client pays a bit more, freelancer gets the full subtotal.
-
-The current rate is returned in the `breakdown` block of the draft response (`commissionPercent`, `commissionAmount`). Never hard-code the percentage — read it from the backend response.
+- `commissionPayer: 'customer'` → the client pays amount × 1.05; the freelancer receives the full amount.
+- `commissionPayer: 'freelancer'` → the freelancer receives amount / 1.05 (e.g. 65.00 → 61.90). This formula replaced amount × 0.95 in Sept 2025 (COR-187).
+- Card payment (`acquiringEnabled`) adds a 3% fee that is **always** on the client.
+- `f2b_calculateInvoiceCost` returns one row per payment method with `received` ('You receive'), `cost` (client pays), `commission`, `vat`, `salesTax`, `acquiringCommission`. On the card row `commissionPercent` reads 8 even when the freelancer pays the 5% — read the money fields.
+- The agent never computes these figures itself and never hard-codes the rate.
 
 ### 10.6 Limits + filter caveats
 
@@ -548,5 +561,20 @@ The current rate is returned in the `breakdown` block of the draft response (`co
 These are real Mellow capabilities but not wrapped in this MCP. Direct the user to https://my.mellow.io/ when asked:
 
 - **Withdrawals** from the freelancer's Mellow balance (to bank / card / wallet / crypto; crypto excluded in Russia, North Korea, Iran).
-- **Tax documents** — Mellow auto-generates monthly invoices and work-completion certificates; freelancer downloads from the web cabinet.
-- **Offers** (Secure Deal escrow product) — different flow from Invoices; not yet wrapped.
+- **CoR acts and payout invoices** — Mellow auto-generates payout invoices and work-completion acts for Contractor-of-Record tasks; the freelancer downloads them from the web cabinet. These are not F2B invoices.
+- **Secure Deal work submission** (`finish-work` / `resubmit`) — the backend requires a comment plus at least one uploaded file; the MCP has no file-upload transport yet.
+- **Invoice / deal PDF download** — open question on how to deliver the file into the chat.
+
+### 10.8 Secure Deal (escrow)
+
+A Secure Deal is the same backend entity as an F2B invoice (`f2b_invoices`, `work_completed = false`) and shares the client list. Flow: freelancer creates a draft (`deal_create`) → sends (`deal_send`) → client prepays, money is held (`in_work`) → freelancer delivers (cabinet only for now) → client accepts (`for_payment`) → automatic payout (`finished`). Gated per user by the `secureDeals` feature flag — 404 means it is off.
+
+| Intent | Tool | Notes |
+|---|---|---|
+| Create / send | `deal_create` → `deal_send` | Show `possiblePayments[].received` / `.cost` and confirm before sending |
+| Edit | `deal_update` | `new` / `sent` / `rejected`; editing `sent` emails the client; editing `rejected` returns it to `new` |
+| Duplicate | `deal_duplicate` | Copy lands in `new`; old deadline is copied as-is |
+| Status / list / summary | `deal_get`, `deal_list`, `deal_summary` | List search covers deal number, client name and email only |
+| Remind | `deal_remind` | `sent` only; Mellow template; no backend rate limit |
+| Cancel | `deal_cancel` | `new` / `sent`; the client is not emailed, their link stops working |
+| Clients | `f2b_searchClients`, `f2b_createClient`, `f2b_createIndividualClient`, `f2b_createClientFromCompany` | Archiving a client is blocked only by `sent` items, not by deals in progress (open backend question) |

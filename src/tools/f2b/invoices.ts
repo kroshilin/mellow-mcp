@@ -1,72 +1,53 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { asStructuredList, asStructuredObject, type MellowClient } from "../../mellow-client";
-import { f2bCommissionPayerEnum, f2bInvoiceStatusEnum, f2bLineItemSchema, mapCurrencyIdToCode } from "./shared";
+import {
+  f2bCommissionPayerEnum,
+  f2bInvoiceStatusEnum,
+  f2bLineItemSchema,
+  mapCurrencyIdToCode,
+  resolveInvoiceableClientCurrency,
+} from "./shared";
 
-/**
- * Read the backend's currencyId from a client response, handling both shapes
- * the backend uses across endpoints:
- *   - flat: `{ currencyId: 3, ... }` (older style; some legacy fields)
- *   - nested: `{ currency: { currency: "EUR", id: 3 }, ... }` (current F2B style)
- *
- * Returns undefined if neither shape matches.
- */
-function readClientCurrencyId(rawClient: unknown): number | undefined {
-  if (!rawClient || typeof rawClient !== "object") return undefined;
-  const c = rawClient as Record<string, unknown>;
-  if (typeof c.currencyId === "number") return c.currencyId;
-  if (c.currency && typeof c.currency === "object") {
-    const cur = c.currency as Record<string, unknown>;
-    if (typeof cur.id === "number") return cur.id;
-  }
-  return undefined;
-}
+/** Shared descriptions so create / update / duplicate explain fields identically. */
+export const F2B_FIELD_DOCS = {
+  serviceId:
+    "Service id from the Mellow service catalog. Find it with f2b_searchServices (search by the service name the user describes), or reuse the service of one of the user's previous invoices (f2b_listInvoices → service.id). Never tell the user to look up the id in the cabinet — the cabinet UI does not show ids.",
+  serviceName: "Invoice title shown to the client (what the work is), no HTML, 1–1024 chars",
+  serviceStartDate: "ISO date YYYY-MM-DD — first day of the work period (when the work was/will be done)",
+  serviceEndDate:
+    "ISO date YYYY-MM-DD — last day of the work period, i.e. the period during which the work was or will be performed. Printed as 'Period from … to …' on the invoice. It is NOT a payment due date.",
+  invoiceDate: "ISO date YYYY-MM-DD — issuance date; the backend rejects future dates",
+  commissionPayer:
+    "Who pays Mellow's 5% service commission: 'freelancer' (taken out of the amount) or 'customer' (added on top for the client). Get the exact resulting figures from f2b_calculateInvoiceCost — never compute them yourself.",
+  acquiringEnabled:
+    "false (default) → client can pay by bank transfer only. true → client may also pay by card. The card fee (3%) is ALWAYS paid by the client on top; it never reduces what the freelancer receives. The 5% service commission is paid by whoever commissionPayer says.",
+} as const;
 
 export function registerF2bInvoiceTools(server: McpServer, client: MellowClient) {
   server.tool(
     "f2b_createInvoiceDraft",
-    "Create an F2B invoice in draft status (`new`). Email is NOT sent to the client at this step — this is the preview half of the mandatory two-step send. Currency is derived from the target client (set at f2b_createClient time). Composite under the hood: GET client → POST /v2/invoices. Backend returns the breakdown (subtotal, commissionPercent, commissionAmount, salesTax, total, payable) so you can show the user the cost decomposition before f2b_sendInvoiceDraft. Backend limits: ≤ 10 line items, total amount ≤ 10 000 in client currency, invoiceDate must be ≤ today. Public payment URL does NOT exist until f2b_sendInvoiceDraft is called.",
+    "Create an F2B invoice in draft status (`new`). Email is NOT sent to the client at this step — this is the preview half of the mandatory two-step send. Currency is derived from the target client. Before calling, collect from the user: client, invoice title (serviceName), service (serviceId — see its field doc), work period, line items, who pays the commission, and whether card payment is allowed. Composite under the hood: GET client → POST /v2/invoices. After creating, call f2b_calculateInvoiceCost({invoiceId}) and show the user the exact 'You receive' (received) and client total (cost) before f2b_sendInvoiceDraft. Backend limits: ≤ 10 line items, total amount ≤ 10 000 in client currency, invoiceDate must be ≤ today. Public payment URL does NOT exist until f2b_sendInvoiceDraft is called.",
     {
       clientId: z.number().int().describe("Numeric client id (currency derives from this client)"),
-      serviceId: z.number().int().describe("Service catalog id from Mellow service taxonomy"),
-      serviceName: z.string().min(1).max(1024).describe("Service description, no HTML; appears as the invoice's main service title"),
-      serviceStartDate: z.string().describe("ISO date YYYY-MM-DD — start of the period covered"),
-      serviceEndDate: z
-        .string()
-        .describe("ISO date — end of the service period; doubles as de-facto due date since API has no separate dueDate field"),
-      invoiceDate: z.string().describe("ISO date — issuance date; backend rejects future dates with 422"),
+      serviceId: z.number().int().describe(F2B_FIELD_DOCS.serviceId),
+      serviceName: z.string().min(1).max(1024).describe(F2B_FIELD_DOCS.serviceName),
+      serviceStartDate: z.string().describe(F2B_FIELD_DOCS.serviceStartDate),
+      serviceEndDate: z.string().describe(F2B_FIELD_DOCS.serviceEndDate),
+      invoiceDate: z.string().describe(F2B_FIELD_DOCS.invoiceDate),
       lineItems: z
         .array(f2bLineItemSchema)
         .min(1)
         .max(10)
         .describe("1–10 line items; sum of price*quantity must be ≤ 10 000 in client currency"),
-      commissionPayer: f2bCommissionPayerEnum.describe(
-        "'freelancer' (commission deducted from payable) or 'customer' (commission added to total)",
-      ),
-      acquiringEnabled: z
-        .boolean()
-        .optional()
-        .describe(
-          "false (default) → bank transfer only (5% commission). true → client picks bank (5%) or card (5%+3%=8%) on the payment page.",
-        ),
+      commissionPayer: f2bCommissionPayerEnum.describe(F2B_FIELD_DOCS.commissionPayer),
+      acquiringEnabled: z.boolean().optional().describe(F2B_FIELD_DOCS.acquiringEnabled),
     },
     { title: "Create F2B invoice draft" },
     async (params) => {
       // Step 1: load the target client to derive currencyId and pre-validate
-      // status. Surfacing the pre-validation here gives the agent a clearer
-      // error than a raw 422 back-end response would.
-      const rawClient = await client.get<unknown>(`/freelancer/f2b/clients/${params.clientId}`);
-      const status =
-        rawClient && typeof rawClient === "object" && "status" in rawClient ? (rawClient as { status?: string }).status : undefined;
-      if (status === "archived" || status === "suspended") {
-        throw new Error(
-          `F2B client ${params.clientId} is in status '${status}'; cannot create invoice. Pick a different client or restore via Mellow UI.`,
-        );
-      }
-      const currencyId = readClientCurrencyId(rawClient);
-      if (currencyId === undefined) {
-        throw new Error(`F2B client ${params.clientId} response does not contain a recognisable currency. Cannot create invoice.`);
-      }
+      // status (clearer error for the agent than a raw backend 422).
+      const currencyId = await resolveInvoiceableClientCurrency(client, params.clientId);
 
       // Step 2: create the draft. Backend response includes the full breakdown
       // (commissionPercent, total, payable, salesTax) — that's the preview the
@@ -98,7 +79,7 @@ export function registerF2bInvoiceTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "f2b_sendInvoiceDraft",
-    "Send a previously created F2B invoice draft to the client. Triggers email to client.email and exposes the public paymentUrl in the response. Transitions invoice status from 'new' → 'sent'. Backend returns 422 if the invoice is not in 'new', or if client.status is in {archived, suspended}. AGENT confirmation rule applies: confirm subtotal/total/client/dueDate with the user before calling — once this returns, the email is in the client's inbox and the only recovery is f2b_cancelInvoice (which the client also gets notified of).",
+    "Send a previously created F2B invoice draft to the client. Triggers email to client.email and exposes the public paymentUrl in the response. Transitions invoice status from 'new' → 'sent'. Backend returns 422 if the invoice is not in 'new', or if client.status is in {archived, suspended}. AGENT confirmation rule applies: confirm client, line items, work period, client total (cost) and 'You receive' (received, from f2b_calculateInvoiceCost) with the user before calling — once this returns, the email is in the client's inbox and the only recovery is f2b_cancelInvoice (which the client also gets notified of).",
     {
       invoiceId: z.number().int().describe("Numeric invoice id from f2b_createInvoiceDraft"),
     },
@@ -190,7 +171,7 @@ export function registerF2bInvoiceTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "f2b_cancelInvoice",
-    "Cancel an F2B invoice. Allowed only when status is 'new' or 'sent'. Backend returns 422 for any other status (paid, cancelled, payment_queued — i.e., acquiring inflight). Cancellation cannot be undone — for a corrected version, cancel and create a new draft. The API does NOT accept a 'reason' field; record reasons in the conversation log only.",
+    "Cancel (= delete) an F2B invoice. There is no hard delete — 'delete this invoice' means this tool. ALWAYS ask the user for explicit confirmation first, naming the invoice number, client and amount, and saying that a sent invoice's client gets a cancellation email; call only after a clear 'yes'. Never cancel as a side effect of another request: to correct an invoice use f2b_updateInvoice, to make a similar one use f2b_duplicateInvoice — neither requires cancelling the original. Allowed only when status is 'new' or 'sent' (422 otherwise). Cannot be undone. The API does NOT accept a 'reason' field.",
     {
       invoiceId: z.number().int().describe("Numeric invoice id"),
     },

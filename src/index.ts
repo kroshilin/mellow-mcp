@@ -30,7 +30,12 @@ import { registerScoutPositionTools } from "./tools/scout/positions";
 import { registerScoutPromoPostTools } from "./tools/scout/promo-posts";
 import { registerF2bClientTools } from "./tools/f2b/clients";
 import { registerF2bInvoiceTools } from "./tools/f2b/invoices";
+import { registerF2bInvoiceEditTools } from "./tools/f2b/invoice-edit";
+import { registerF2bPricingTools } from "./tools/f2b/pricing";
+import { registerSecureDealTools } from "./tools/f2b/deals";
+import { registerFreelancerFinanceTools } from "./tools/freelancer-finance";
 import { registerCompanyPrompts, registerFreelancerPrompts } from "./prompts";
+import { handleTokenExchange, withTokenErrorHandling } from "./token-lifecycle";
 import { refreshUpstreamToken, type Props } from "./utils";
 
 export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
@@ -91,6 +96,10 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
         // get, list, cancel) and the rest of client mgmt (update, archive).
         registerF2bClientTools(this.server, client);
         registerF2bInvoiceTools(this.server, client);
+        registerF2bInvoiceEditTools(this.server, client);
+        registerF2bPricingTools(this.server, client);
+        registerSecureDealTools(this.server, client);
+        registerFreelancerFinanceTools(this.server, client);
         registerProfileTools(this.server, client);
 
         registerFreelancerPrompts(this.server);
@@ -146,7 +155,7 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
   }
 }
 
-export default new OAuthProvider({
+const oauthProvider = new OAuthProvider({
   apiHandler: MyMCP.serve("/mcp"),
   apiRoute: "/mcp",
   authorizeEndpoint: "/authorize",
@@ -154,28 +163,23 @@ export default new OAuthProvider({
   defaultHandler: MellowHandler as any,
   tokenEndpoint: "/token",
   refreshTokenTTL: 2592000, // 30 days
-  async tokenExchangeCallback({ grantType, props }) {
-    if (grantType !== "refresh_token" || !props.refreshToken) {
-      return;
-    }
-
-    const refreshed = await refreshUpstreamToken({
-      client_id: env.MELLOW_CLIENT_ID,
-      client_secret: env.MELLOW_CLIENT_SECRET,
-      refresh_token: props.refreshToken,
-      upstream_url: `${env.MELLOW_BASE_URL}/token`,
-    });
-
-    if (!refreshed) {
-      return;
-    }
-
-    return {
-      newProps: {
-        ...props,
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken ?? props.refreshToken,
+  // See src/token-lifecycle.ts: aligns MCP token TTL with the upstream token,
+  // and turns a revoked upstream session into OAuth invalid_grant (re-auth)
+  // instead of fresh MCP tokens around a dead upstream token.
+  tokenExchangeCallback: ({ grantType, props }) =>
+    handleTokenExchange(
+      { grantType, props: props as Props },
+      {
+        refresh: (refreshToken) =>
+          refreshUpstreamToken({
+            client_id: env.MELLOW_CLIENT_ID,
+            client_secret: env.MELLOW_CLIENT_SECRET,
+            refresh_token: refreshToken,
+            upstream_url: `${env.MELLOW_BASE_URL}/token`,
+          }),
+        now: () => Math.floor(Date.now() / 1000),
       },
-    };
-  },
+    ),
 });
+
+export default withTokenErrorHandling<Env>(oauthProvider);
