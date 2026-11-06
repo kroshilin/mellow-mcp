@@ -58,7 +58,9 @@
 	"vars": {
 		"MELLOW_API_BASE_URL": "https://my.mellow.io/api",
 		"MELLOW_BASE_URL": "https://wlcm.mellow.io",
-		"SCOUT_API_BASE_URL": "https://aiscout-api.mellow.io/api"
+		"SCOUT_API_BASE_URL": "https://aiscout-api.mellow.io/api",
+		// Public origin of this Worker; document tools build download links on it.
+		"MCP_PUBLIC_URL": "https://mcp.it-dep-271.workers.dev"
 	},
 	"dev": {
 		"port": 8788
