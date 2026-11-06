@@ -34,6 +34,9 @@ import { registerF2bInvoiceEditTools } from "./tools/f2b/invoice-edit";
 import { registerF2bPricingTools } from "./tools/f2b/pricing";
 import { registerSecureDealTools } from "./tools/f2b/deals";
 import { registerFreelancerFinanceTools } from "./tools/freelancer-finance";
+import { registerF2bDocumentTools } from "./tools/f2b/documents";
+import { registerCorDocumentTools } from "./tools/cor-documents";
+import { createKvFileLinkPublisher } from "./file-links";
 import { registerCompanyPrompts, registerFreelancerPrompts } from "./prompts";
 import { handleTokenExchange, withTokenErrorHandling } from "./token-lifecycle";
 import { refreshUpstreamToken, type Props } from "./utils";
@@ -100,6 +103,11 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
         registerF2bPricingTools(this.server, client);
         registerSecureDealTools(this.server, client);
         registerFreelancerFinanceTools(this.server, client);
+
+        // PDFs reach the user as short-lived links on this Worker (src/file-links.ts).
+        const files = createKvFileLinkPublisher(this.env.OAUTH_KV, this.env.MCP_PUBLIC_URL);
+        registerF2bDocumentTools(this.server, client, { files });
+        registerCorDocumentTools(this.server, client, files);
         registerProfileTools(this.server, client);
 
         registerFreelancerPrompts(this.server);

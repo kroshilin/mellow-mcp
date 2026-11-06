@@ -63,6 +63,8 @@ export function makeClientStub(responses: Record<string, unknown>) {
     put: record("PUT"),
     patch: record("PATCH"),
     del: record("DELETE"),
+    // Binary downloads are scripted under "GETFILE <path-prefix>".
+    getFile: record("GETFILE"),
   };
   return { stub, calls };
 }

@@ -655,6 +655,24 @@
 
 ---
 
+## Recipe 18 — Freelancer: download documents (invoice PDF, deal PDF, CoR acts and invoices)
+
+**User goal:** "Send me the PDF of invoice INV-12" / "the invoice for deal SD-5" / "my acts for Q3".
+
+**Sequence:**
+
+1. Decide which document family the user means. F2B invoice or Secure Deal → steps 2–3. Acts / invoices for work done for companies through Mellow (CoR) → steps 4–5. If unclear, ask — they are different documents.
+2. Find the id: `f2b_listInvoices` (F2B) or `deal_list({search: number})` (deal).
+3. `f2b_downloadInvoicePdf({invoiceId})` / `deal_downloadInvoicePdf({dealId})`. Available only for verified company clients and statuses `sent` / `paid` / `finished` (deals: `sent` / `finished`). If the tool refuses, relay its reason (e.g. "send the invoice first", "the client has not verified yet").
+4. `cor_listDocuments({type?, dateFrom?, dateTo?})` and show what was found.
+5. Offer the choice: PDFs one by one (`cor_downloadDocument({documentId})` per document) or a single ZIP sent to the user's Mellow email (`cor_emailDocumentsArchive({same filters})`).
+
+**Delivery:** every download returns `download.url`, valid 15 minutes. Give it to the user as a link; you cannot read the file. If it expired, call the tool again.
+
+**Done when:** the user has the link(s) or knows the ZIP is on its way to their inbox.
+
+---
+
 ## Cross-recipe rules
 
 These apply to every recipe above:

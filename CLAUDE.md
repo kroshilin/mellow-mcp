@@ -56,6 +56,10 @@ Backend bugs / tickets we file against the Mellow backend are tracked in the ext
 
 `src/mellow-client.ts` is intentionally thin: a closure over `{baseUrl, accessToken}` returning `{get, post, put, patch, del}`. It throws on non-2xx with the response body included — tool handlers let errors propagate and the MCP SDK surfaces them to the client. Query string filters for list endpoints use the bracketed form `filter[key]=value` (see `src/tools/tasks.ts` for the canonical example) — match this when adding new list tools.
 
+### File downloads (short-lived links)
+
+claude.ai accepts only text and image content in tool results, so document tools (`f2b_downloadInvoicePdf`, `deal_downloadInvoicePdf`, `cor_downloadDocument`) fetch the PDF with the user's token via `MellowClient.getFile`, store it in `OAUTH_KV` for 15 minutes under a random 256-bit token (`src/file-links.ts`) and return a link `${MCP_PUBLIC_URL}/files/<token>/<name>`, served unauthenticated by `MellowHandler`. No credentials are stored; content types outside PDF/ZIP are served as octet-stream. `MCP_PUBLIC_URL` is a wrangler var (prod origin); override it in `.dev.vars` for local runs.
+
 ### OAuth security model
 
 `src/workers-oauth-utils.ts` implements:

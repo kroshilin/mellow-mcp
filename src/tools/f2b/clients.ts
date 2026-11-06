@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { asStructuredList, asStructuredObject, type MellowClient } from "../../mellow-client";
+import { describeActiveRecords, findActiveRecordsForClient } from "./client-activity";
 import { currencyToId, f2bClientStatusEnum, f2bCurrencyEnum, mapCurrencyIdToCode } from "./shared";
 
 export function registerF2bClientTools(server: McpServer, client: MellowClient) {
@@ -94,15 +95,31 @@ export function registerF2bClientTools(server: McpServer, client: MellowClient) 
 
   server.tool(
     "f2b_archiveClient",
-    "Soft-delete (archive) an F2B legal client. Backend transitions client.status → 'archived'. New invoices to archived clients are rejected with HTTP 422; invoices already sent before archive continue to work. There is no un-archive endpoint — to re-engage an archived client, create a new one. Confirm with the user before calling: archive is irreversible from MCP and is not reflected in the freelancer's email or UI history.",
+    "Delete a client — Mellow archives it (status → 'archived'); this is what the cabinet's 'Delete client' does, for invoice and Secure Deal clients alike. Condition: the client must have NO active invoices or Secure Deals — active means any status other than new (draft), paid, finished and cancelled. The tool checks this itself and refuses, listing the blocking invoices/deals, if any exist; tell the user to wait until they are paid/finished or cancel them first. Irreversible: there is no un-archive — to work with the client again, create a new one. ALWAYS confirm with the user first, naming the client (company or person name and email); call only after an explicit 'yes'. Composite: GET client → active invoice/deal check → DELETE /freelancer/f2b/clients.",
     {
       clientId: z.number().int().describe("Numeric client id"),
     },
-    { title: "Archive F2B client", destructiveHint: true },
+    { title: "Delete (archive) F2B client", destructiveHint: true },
     async (params) => {
+      const existing = mapCurrencyIdToCode(await client.get<Record<string, unknown>>(`/freelancer/f2b/clients/${params.clientId}`));
+      const name = existing.companyName ?? existing.fullName ?? existing.email ?? `id ${params.clientId}`;
+      if (existing.status === "archived") {
+        throw new Error(`Client ${name} (id ${params.clientId}) is already deleted (archived).`);
+      }
+      const email = typeof existing.email === "string" ? existing.email : undefined;
+      const active = await findActiveRecordsForClient(client, params.clientId, email);
+      if (active.length > 0) {
+        throw new Error(
+          `Client ${name} (id ${params.clientId}) cannot be deleted: it has ${active.length} active invoice(s)/deal(s): ${describeActiveRecords(active)}. A client can be deleted only when all its invoices and deals are new (draft), paid, finished or cancelled.`,
+        );
+      }
       // Backend takes clientId in the request body (not the path).
       const result = await client.del<unknown>("/freelancer/f2b/clients", { clientId: params.clientId });
-      const mapped = mapCurrencyIdToCode(result);
+      const mapped = {
+        archived: true,
+        client: { id: params.clientId, name, email, previousStatus: existing.status },
+        raw: mapCurrencyIdToCode(result),
+      };
       return {
         structuredContent: asStructuredObject(mapped),
         content: [{ text: JSON.stringify(mapped, null, 2), type: "text" as const }],

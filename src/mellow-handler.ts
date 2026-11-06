@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
+import { FILE_LINK_PATH_PREFIX, serveFileLink } from "./file-links";
 import { upstreamExpiresAt } from "./token-lifecycle";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
 import {
@@ -16,6 +17,10 @@ import {
 } from "./workers-oauth-utils";
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
+
+// Short-lived download links minted by document tools (see src/file-links.ts).
+// Unauthenticated by design: the unguessable token in the path is the credential.
+app.get(`${FILE_LINK_PATH_PREFIX}/:token/:name`, (c) => serveFileLink(c.env.OAUTH_KV, c.req.param("token")));
 
 app.get("/authorize", async (c) => {
   const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);

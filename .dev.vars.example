@@ -3,3 +3,4 @@ MELLOW_CLIENT_SECRET=<your mellow client secret>
 MELLOW_BASE_URL=https://wlcm.mellow.io
 MELLOW_API_BASE_URL=https://my.mellow.io/api
 COOKIE_ENCRYPTION_KEY=<your cookie encryption key>
+MCP_PUBLIC_URL=http://localhost:8788
