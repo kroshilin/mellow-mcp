@@ -6,19 +6,12 @@ import { currencyToId, f2bClientStatusEnum, f2bCurrencyEnum, mapCurrencyIdToCode
 export function registerF2bClientTools(server: McpServer, client: MellowClient) {
   server.tool(
     "f2b_createClient",
-    "Create a new F2B (freelancer-to-business) legal client. Currency (EUR or USD) is fixed at creation and cannot be changed later. Required: email, country (ISO-3166 alpha-2), currency. All other fields optional. Status starts as 'not_verified' — this does NOT block invoicing; verification triggers on the client's first payment attempt. The freelancer can immediately create and send invoices to a not_verified client. There is no contactName/phone in the F2B model — do not invent these fields. Address fields (address, city, region, postalCode) are accepted as flat input but the backend returns them nested under an `address: {address, city, region, postalCode, country}` object — do not be surprised by the shape mismatch when reading the response.",
+    "Create a new F2B (freelancer-to-business) legal client (a company). Ask the user for exactly four things — the same four the Mellow cabinet form asks: company name, email, country, currency. Do NOT ask for VAT, TIN, registration number or address: the client fills those in themselves on the invoice payment page ('Confirm details'), and they drive the client's verification and tax calculation. Currency (EUR or USD) is fixed at creation and cannot be changed later — confirm it with the user. Status starts as 'not_verified' — this does NOT block invoicing; verification happens when the client confirms details / pays. Several clients can be created in one conversation by calling this tool once per client.",
     {
+      companyName: z.string().min(1).describe("Client's legal company name — required, always ask the user"),
       email: z.string().email().describe("Email where the invoice link will be sent"),
       country: z.string().length(2).describe("ISO-3166 alpha-2 country code, e.g. CY, US, DE"),
       currency: f2bCurrencyEnum.describe("EUR or USD. Fixed at creation — invoices to this client must be in this currency."),
-      companyName: z.string().optional().describe("Legal company name"),
-      regNumber: z.string().max(30).optional().describe("Company registration number, ≤ 30 chars"),
-      vat: z.string().optional().describe("VAT id (string identifier, not a percent rate)"),
-      tin: z.string().optional().describe("Taxpayer identification number"),
-      address: z.string().optional(),
-      city: z.string().optional(),
-      region: z.string().optional().describe("State/region. For country=US, must be a valid 2-letter state code."),
-      postalCode: z.string().optional(),
     },
     { title: "Create F2B client" },
     async (params) => {
@@ -27,13 +20,6 @@ export function registerF2bClientTools(server: McpServer, client: MellowClient) 
         country: params.country,
         currencyId: currencyToId(params.currency),
         companyName: params.companyName,
-        regNumber: params.regNumber,
-        vat: params.vat,
-        tin: params.tin,
-        address: params.address,
-        city: params.city,
-        region: params.region,
-        postalCode: params.postalCode,
       };
       const result = await client.post<unknown>("/freelancer/f2b/clients/legal", body);
       const mapped = mapCurrencyIdToCode(result);
@@ -79,26 +65,19 @@ export function registerF2bClientTools(server: McpServer, client: MellowClient) 
 
   server.tool(
     "f2b_updateClient",
-    "Update an existing F2B legal client. Currency and type are immutable — they are NOT in the body and any attempt to change them is silently ignored by backend. Mutable fields: email, country, companyName, regNumber, vat, tin, address, city, region, postalCode. Pass only the fields you want to change; omitted fields keep their current backend value. Backend returns the updated client with address fields nested under `address: {...}`.",
+    "Update an existing F2B legal client — the same fields the freelancer can edit in the Mellow cabinet: company name, email, country. Currency and type are immutable. VAT / TIN / registration number / address are entered by the client on the payment page, not by the freelancer — do not offer to change them. The backend only allows edits while the client is not yet verified. Pass only the fields you want to change; omitted fields keep their current value.",
     {
       clientId: z.number().int().describe("Numeric client id (from f2b_createClient or f2b_listClients)"),
+      companyName: z.string().min(1).optional().describe("Legal company name"),
       email: z.string().email().optional().describe("Email where invoice links go"),
       country: z.string().length(2).optional().describe("ISO-3166 alpha-2 country code"),
-      companyName: z.string().optional().describe("Legal company name"),
-      regNumber: z.string().max(30).optional().describe("Company registration number, ≤ 30 chars"),
-      vat: z.string().optional().describe("VAT id (string, not percent)"),
-      tin: z.string().optional().describe("Taxpayer identification number"),
-      address: z.string().optional(),
-      city: z.string().optional(),
-      region: z.string().optional().describe("State/region. For country=US, must be a 2-letter state code."),
-      postalCode: z.string().optional(),
     },
     { title: "Update F2B client" },
     async (params) => {
       // Whitelist of mutable fields. currency/type are immutable on the backend
       // by design — never forward them, even if Zod somewhere lets an unknown
       // key through. Omitted fields = "no change" on backend.
-      const mutable = ["email", "country", "companyName", "regNumber", "vat", "tin", "address", "city", "region", "postalCode"] as const;
+      const mutable = ["email", "country", "companyName"] as const;
       const body: Record<string, unknown> = { clientId: params.clientId };
       for (const key of mutable) {
         const value = params[key];

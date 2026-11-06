@@ -2,18 +2,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { asStructuredList, type MellowClient } from "../mellow-client";
 
-export function registerReferenceTools(server: McpServer, client: MellowClient) {
-  server.tool("getCurrencies", "Get list of available currencies", {}, { title: "Get currencies", readOnlyHint: true }, async () => {
-    const result = await client.get<unknown>("/lookups/currencies");
-    return {
-      structuredContent: asStructuredList(result),
-      content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
-    };
-  });
-
+/** Registered in both company and freelancer mode — /exchanges is not role-gated. */
+export function registerExchangeRateTool(server: McpServer, client: MellowClient) {
   server.tool(
     "getExchangeRate",
-    "Get currency exchange/conversion rates used by Mellow for multi-currency tasks. Returns an array of {base, target, rate} triples.",
+    "Get Mellow's current currency exchange rates — the same rates the Mellow cabinet shows. Returns an array of {base, target, rate} triples. Quote rates from this tool; never use rates from memory or the web when the user asks about Mellow's rates.",
     {},
     { title: "Get exchange rates", readOnlyHint: true },
     async () => {
@@ -24,6 +17,18 @@ export function registerReferenceTools(server: McpServer, client: MellowClient) 
       };
     },
   );
+}
+
+export function registerReferenceTools(server: McpServer, client: MellowClient) {
+  server.tool("getCurrencies", "Get list of available currencies", {}, { title: "Get currencies", readOnlyHint: true }, async () => {
+    const result = await client.get<unknown>("/lookups/currencies");
+    return {
+      structuredContent: asStructuredList(result),
+      content: [{ text: JSON.stringify(result, null, 2), type: "text" as const }],
+    };
+  });
+
+  registerExchangeRateTool(server, client);
 
   server.tool(
     "getTaxStatuses",

@@ -75,8 +75,9 @@ describe("f2b_updateClient", () => {
     await invoke("f2b_updateClient", {
       clientId: 42,
       companyName: "Acme Updated",
+      // VAT/TIN/regNumber/address are client-entered on the payment page
+      // (backlog row 5) — leaked here to prove the whitelist drops them.
       vat: "CY77777777",
-      // address, city, country, etc. intentionally omitted
     });
 
     expect(capture.method).toBe("PUT");
@@ -84,7 +85,6 @@ describe("f2b_updateClient", () => {
     expect(capture.body).toEqual({
       clientId: 42,
       companyName: "Acme Updated",
-      vat: "CY77777777",
     });
   });
 

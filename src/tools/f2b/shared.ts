@@ -103,3 +103,64 @@ export const f2bLineItemSchema = z.object({
 });
 
 export type F2bLineItem = z.infer<typeof f2bLineItemSchema>;
+
+/**
+ * Read the backend's currencyId from a client or invoice response, handling
+ * both shapes the backend uses across endpoints:
+ *   - flat: `{ currencyId: 3, ... }`
+ *   - nested: `{ currency: { currency: "EUR", id: 3 }, ... }`
+ */
+export function readCurrencyId(raw: unknown): number | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.currencyId === "number") return c.currencyId;
+  if (c.currency && typeof c.currency === "object") {
+    const cur = c.currency as Record<string, unknown>;
+    if (typeof cur.id === "number") return cur.id;
+  }
+  return undefined;
+}
+
+type ClientReader = { get: <T>(path: string) => Promise<T> };
+
+/**
+ * Load an F2B client and return the currencyId invoices to it must use.
+ * Rejects clients that cannot be invoiced (archived / suspended) with an
+ * agent-readable error instead of a raw backend 422.
+ */
+export async function resolveInvoiceableClientCurrency(client: ClientReader, clientId: number): Promise<number> {
+  const raw = await client.get<unknown>(`/freelancer/f2b/clients/${clientId}`);
+  const status = raw && typeof raw === "object" && "status" in raw ? (raw as { status?: string }).status : undefined;
+  if (status === "archived" || status === "suspended") {
+    throw new Error(
+      `F2B client ${clientId} is in status '${status}'; cannot invoice it. Pick a different client or restore it in the Mellow UI.`,
+    );
+  }
+  const currencyId = readCurrencyId(raw);
+  if (currencyId === undefined) {
+    throw new Error(`F2B client ${clientId} response does not contain a recognisable currency.`);
+  }
+  return currencyId;
+}
+
+/** Backend dates come back as full ISO timestamps; write endpoints want YYYY-MM-DD. */
+export function toIsoDate(value: unknown): string | undefined {
+  return typeof value === "string" && value.length >= 10 ? value.slice(0, 10) : undefined;
+}
+
+/** Keep only the fields the write endpoints accept (stored line items carry extras such as `total`). */
+export function normalizeLineItems(raw: unknown): F2bLineItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const i = item as Record<string, unknown>;
+    return {
+      name: String(i.name),
+      quantity: Number(i.quantity),
+      measure: i.measure as F2bLineItem["measure"],
+      price: Number(i.price),
+    };
+  });
+}
+
+/** Statuses in which the backend accepts PUT /freelancer/f2b/v2/invoices. */
+export const F2B_EDITABLE_INVOICE_STATUSES = ["new", "sent"] as const;

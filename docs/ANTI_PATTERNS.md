@@ -744,23 +744,49 @@ f2b_createInvoiceDraft({...})
 f2b_sendInvoiceDraft({invoiceId})  // immediately after create
 ```
 
-**Why** — the two-step send is **mandatory** by design (see DOMAIN §10.4). The draft response carries `breakdown: {subtotal, commissionPercent, commissionAmount, total, payable}` — the agent is supposed to surface that to the user and get a confirming "yes" before sending. Once `sendInvoiceDraft` returns, the email is in the client's inbox; the only recovery is `f2b_cancelInvoice`, which also pings the client.
+**Why** — the two-step send is **mandatory** by design (see DOMAIN §10.4). Between the two calls the agent must call `f2b_calculateInvoiceCost({invoiceId})`, surface what the client pays (`cost`) and what the freelancer receives (`received`), and get a confirming "yes" before sending. Once `sendInvoiceDraft` returns, the email is in the client's inbox; the only recovery is `f2b_cancelInvoice`, which also pings the client.
 
-**Good** — even when the user says "create and send", still pause between calls. Show the breakdown ("subtotal €X, commission Y% = €Z paid by {you|client}, total €T, payable to you €P") and ask "send?" before the second call. There is **no** `f2b_createAndSendInvoice` shortcut. Do not invent one.
+**Good** — even when the user says "create and send", still pause between calls. Show the calculation ("client pays €C by bank / €C' by card; you receive €R") and ask "send?" before the second call. There is **no** `f2b_createAndSendInvoice` shortcut. Do not invent one.
 
 ---
 
-### M2 — Hard-coding the commission percentage
+### M2 — Computing commission or 'You receive' yourself
 
 **Bad**
 
-```ts
-const total = subtotal * 1.05; // assume 5%
+```
+// User: "how much will I get if I pay the commission?"
+Agent: "65.00 − 5% = 61.75 EUR"          // wrong
+// …and then reuses "minus 5%" for every later question in the conversation
 ```
 
-**Why** — commission rate is a backend-controlled value returned in `breakdown.commissionPercent` on every draft. It can change (e.g. when card-payment is re-enabled, the rate becomes payment-method-dependent). A hard-coded 5% will silently mislead users the day the rate changes.
+**Why** — when the freelancer pays the commission Mellow computes `amount / 1.05` (65.00 → **61.90**), not `amount × 0.95`. Card payments add a 3% fee that is always on the client — putting the full 8% on the freelancer is also wrong. Rounding is backend-side. Any self-computed figure will disagree with the cabinet.
 
-**Good** — read `breakdown.commissionPercent` and `breakdown.commissionAmount` from the `f2b_createInvoiceDraft` response. Render those numbers verbatim.
+**Good** — call `f2b_calculateInvoiceCost` (`{invoiceId}` for an existing invoice, `{clientId, commissionPayer, lineItems|amount}` for an estimate) every time a money figure is needed, and quote `received` / `cost` verbatim. Do not memorise a formula across turns.
+
+---
+
+### M2a — Cancelling to "edit" or "duplicate" an invoice
+
+**Bad**
+
+```
+// User: "change the amount on invoice #INV-12"
+f2b_cancelInvoice({invoiceId})          // unasked, notifies the client
+f2b_createInvoiceDraft({...newAmount})
+```
+
+**Why** — `f2b_updateInvoice` edits in place (new/sent). `f2b_duplicateInvoice` copies without touching the original. Cancelling is destructive, emails the client, and was not requested.
+
+**Good** — `f2b_updateInvoice({invoiceId, lineItems})` (confirm first if the invoice is `sent` — the client gets an update email). For "same invoice for another client" → `f2b_duplicateInvoice({invoiceId, clientId})`. Cancel only on an explicit request, after confirming number, client and amount.
+
+---
+
+### M2b — Asking for VAT / registration number / address when creating a client
+
+**Why** — the cabinet form asks only company name, email, country, currency. The client enters VAT / TIN / registration number / address on the payment page; values typed by the freelancer show up pre-filled there and can confuse the client.
+
+**Good** — ask exactly: company name, email, country, currency.
 
 ---
 
@@ -789,7 +815,7 @@ These come up often but don't deserve a full Bad/Why/Good walkthrough:
 
 ---
 
-### M5 — Promising withdrawals, tax docs, or Offers from this MCP
+### M5 — Promising withdrawals, CoR acts, or Offers from this MCP
 
 **Bad**
 
@@ -800,7 +826,7 @@ These come up often but don't deserve a full Bad/Why/Good walkthrough:
 
 **Why** — these are real Mellow capabilities but **not exposed by this MCP** (see DOMAIN §10.7). They live in the web cabinet only.
 
-**Good** — direct the user to https://my.mellow.io/ for: withdrawals (bank / card / wallet / crypto), tax document downloads, and Offers (Secure Deal escrow product).
+**Good** — direct the user to https://my.mellow.io/ for: withdrawals (bank / card / wallet / crypto), CoR acts and payout invoices (not F2B invoices — never substitute one for the other), and Offers (Secure Deal escrow product).
 
 ---
 
@@ -809,9 +835,10 @@ These come up often but don't deserve a full Bad/Why/Good walkthrough:
 - [ ] Did I confirm intent with the user using the entity ID and tool name?
 - [ ] Did I read current state via `getTask` / `getCompanyBalance` / `scout_getPosition` / `f2b_getInvoice`?
 - [ ] Is the state legal for this transition?
-- [ ] If money is involved: did I pre-check the balance (company mode) or surface the breakdown (F2B send)?
+- [ ] If money is involved: did I pre-check the balance (company mode) or quote `f2b_calculateInvoiceCost` (F2B) — never my own arithmetic?
 - [ ] If `createTask` / `f2b_createInvoiceDraft`: are all required fields user-provided (no inventions)?
-- [ ] If `f2b_sendInvoiceDraft`: did I just show the user the breakdown and get an explicit "yes"?
+- [ ] If `f2b_sendInvoiceDraft`: did I just show the user the calculation and get an explicit "yes"?
+- [ ] If `f2b_cancelInvoice`: did the user explicitly ask, and did I confirm number, client and amount?
 - [ ] If retrying: did I check `externalId` via `listTasks` first (CoR) or `f2b_getInvoice` to avoid duplicate sends (F2B)?
 - [ ] If multi-company (company mode): am I sure which company is active?
 - [ ] If 4xx: did I capture `X-Trace-Id`?

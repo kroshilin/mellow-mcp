@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
+import { upstreamExpiresAt } from "./token-lifecycle";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
 import {
   addApprovedClient,
@@ -203,6 +204,11 @@ app.get("/callback", async (c) => {
     props: {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
+      accessTokenExpiresAt: upstreamExpiresAt({
+        accessToken: tokens.accessToken,
+        expiresIn: tokens.expiresIn,
+        now: Math.floor(Date.now() / 1000),
+      }),
       email,
       name,
       sub,

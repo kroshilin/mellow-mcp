@@ -1,3 +1,5 @@
+import type { UpstreamRefreshResult } from "./token-lifecycle";
+
 /**
  * Constructs an authorization URL for an upstream service.
  *
@@ -55,7 +57,7 @@ export async function fetchUpstreamAuthToken({
   client_secret: string;
   redirect_uri: string;
   client_id: string;
-}): Promise<[{ accessToken: string; refreshToken?: string }, null] | [null, Response]> {
+}): Promise<[{ accessToken: string; refreshToken?: string; expiresIn?: number }, null] | [null, Response]> {
   if (!code) {
     return [null, new Response("Missing code", { status: 400 })];
   }
@@ -79,12 +81,12 @@ export async function fetchUpstreamAuthToken({
     return [null, new Response("Failed to fetch access token", { status: 500 })];
   }
 
-  const body = (await resp.json()) as { access_token?: string; id_token?: string; refresh_token?: string };
+  const body = (await resp.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
   const accessToken = body.access_token;
   if (!accessToken) {
     return [null, new Response("Missing access token", { status: 400 })];
   }
-  return [{ accessToken, refreshToken: body.refresh_token }, null];
+  return [{ accessToken, refreshToken: body.refresh_token, expiresIn: body.expires_in }, null];
 }
 
 /**
@@ -100,7 +102,7 @@ export async function refreshUpstreamToken({
   client_secret: string;
   refresh_token: string;
   upstream_url: string;
-}): Promise<{ accessToken: string; refreshToken?: string } | null> {
+}): Promise<UpstreamRefreshResult> {
   try {
     const resp = await fetch(upstream_url, {
       body: new URLSearchParams({
@@ -117,20 +119,25 @@ export async function refreshUpstreamToken({
     });
 
     if (!resp.ok) {
-      console.error("Upstream token refresh failed:", resp.status);
-      return null;
+      // Error bodies from the upstream token endpoint carry an OAuth error
+      // code, never tokens — safe to log (truncated) for diagnosis.
+      const detail = (await resp.text()).slice(0, 300);
+      console.error("Upstream token refresh failed:", resp.status, detail);
+      // 400/401 = the refresh token itself was rejected (revoked, expired,
+      // invalid_grant). Anything else (5xx, 429) is worth retrying.
+      return { ok: false, permanent: resp.status === 400 || resp.status === 401, status: resp.status, detail };
     }
 
-    const body = (await resp.json()) as { access_token?: string; id_token?: string; refresh_token?: string };
+    const body = (await resp.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
     if (!body.access_token) {
       console.error("Upstream token refresh returned no access_token");
-      return null;
+      return { ok: false, permanent: false, status: resp.status };
     }
 
-    return { accessToken: body.access_token, refreshToken: body.refresh_token };
+    return { ok: true, accessToken: body.access_token, refreshToken: body.refresh_token, expiresIn: body.expires_in };
   } catch (error) {
     console.error("Upstream token refresh error:", error);
-    return null;
+    return { ok: false, permanent: false };
   }
 }
 
@@ -142,6 +149,8 @@ export type Props = {
   email: string;
   accessToken: string;
   refreshToken?: string;
+  /** When the upstream access token expires (epoch seconds). Drives the MCP access-token TTL. */
+  accessTokenExpiresAt?: number;
   /**
    * Optional active company context for multi-company users.
    * When set, MellowClient sends `X-Company-Id: <activeCompanyId>` on every request.
