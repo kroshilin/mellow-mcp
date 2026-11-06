@@ -790,19 +790,18 @@ f2b_createInvoiceDraft({...newAmount})
 
 ---
 
-### M3 — Treating `f2b_archiveClient` as a hard delete
+### M3 — Deleting a client without the active-records check or confirmation
 
 **Bad**
 
 ```
 // User said "I won't work with this client again, remove them".
-f2b_archiveClient({clientId})
-// then assumes the existing sent invoices stop working
+f2b_archiveClient({clientId})   // straight away, no confirmation
 ```
 
-**Why** — archive is a soft state. Already-sent invoices keep working (client can still pay). New `createInvoiceDraft` against the archived client is rejected with 422. There is **no** un-archive endpoint — to re-engage, create a brand-new client record.
+**Why** — deletion is archiving and cannot be undone. Product rule: a client with an active invoice or deal (any status except new, paid, finished, cancelled) must not be deleted; the tool enforces it and lists the blockers.
 
-**Good** — confirm with the user the asymmetric behavior: archive blocks new invoices but keeps existing ones live. Mention there's no undo.
+**Good** — name the client (name + email), say it cannot be undone, get a "yes", then call the tool. If it refuses, tell the user which invoices/deals block it and what to do (wait for payment / finish, or cancel drafts and sent items).
 
 ---
 

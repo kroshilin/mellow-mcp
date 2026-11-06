@@ -7,6 +7,7 @@ import {
   f2bCommissionPayerEnum,
   f2bCurrencyEnum,
   f2bLineItemSchema,
+  idToCurrency,
   mapCurrencyIdToCode,
   normalizeLineItems,
   readCurrencyId,
@@ -131,12 +132,63 @@ function assertDealStatus(deal: DealRecord, dealId: number, allowed: readonly st
   return status;
 }
 
-function staleDeadlineNote(deal: DealRecord | undefined): string[] {
-  const deadline = toIsoDate(deal?.serviceDeadline);
-  if (!deadline || isAfterToday(deadline)) return [];
-  return [
-    `The deadline ${deadline} is not after today. Ask the user for a new date and call deal_update({dealId, serviceDeadline}) before deal_send.`,
-  ];
+function clientOf(deal: DealRecord): DealRecord {
+  return deal.client && typeof deal.client === "object" ? (deal.client as DealRecord) : {};
+}
+
+function reminderRecipient(deal: DealRecord): { name: string | null; email: string | null } {
+  const party = clientOf(deal);
+  const pick = (...values: unknown[]) => values.find((v): v is string => typeof v === "string" && v.length > 0) ?? null;
+  return {
+    name: pick(party.companyName, party.fullName, deal.clientName),
+    email: pick(party.email, deal.clientEmail),
+  };
+}
+
+type DuplicateParams = {
+  dealId: number;
+  serviceDeadline: string;
+  clientId?: number;
+  lineItems?: z.infer<typeof f2bLineItemSchema>[];
+  commissionPayer?: z.infer<typeof f2bCommissionPayerEnum>;
+  serviceId?: number;
+  serviceName?: string;
+  acquiringEnabled?: boolean;
+};
+
+/**
+ * The cabinet's Duplicate (COR-1622 duplicate-as-prefill) opens the create
+ * form prefilled from the source: client, service, currency, fee payer and
+ * line items — but NOT the deadline and NOT the card-payment flag. We build
+ * the same create payload; the user supplies the new deadline.
+ */
+function buildDuplicateBody(source: DealRecord, params: DuplicateParams, currencyId: number): Record<string, unknown> {
+  assertServicePair(params);
+  const service = source.service && typeof source.service === "object" ? (source.service as DealRecord) : {};
+  const body = {
+    clientId: params.clientId ?? clientOf(source).id,
+    currencyId,
+    commissionPayer: params.commissionPayer ?? source.commissionPayer,
+    serviceId: params.serviceId ?? service.id,
+    serviceName: params.serviceName ?? source.serviceName,
+    serviceDeadline: params.serviceDeadline,
+    lineItems: params.lineItems ?? normalizeLineItems(source.lineItems),
+    acquiringEnabled: params.acquiringEnabled ?? false,
+  };
+  const missing = Object.entries(body)
+    .filter(([, value]) => value === undefined || value === null || (Array.isArray(value) && value.length === 0))
+    .map(([key]) => key);
+  if (missing.length > 0) {
+    throw new Error(`Deal ${params.dealId} lacks ${missing.join(", ")}; pass them explicitly to build the copy.`);
+  }
+  return body;
+}
+
+/** serviceId and serviceName describe one category: change both or neither. */
+function assertServicePair(params: { serviceId?: number; serviceName?: string }): void {
+  if ((params.serviceId === undefined) !== (params.serviceName === undefined)) {
+    throw new Error("Pass serviceId and serviceName together (both from the same f2b_searchServices row).");
+  }
 }
 
 type UpdateParams = {
@@ -160,9 +212,7 @@ function buildUpdateBody(deal: DealRecord, params: UpdateParams): Record<string,
   if (!UPDATABLE_FIELDS.some((field) => params[field] !== undefined)) {
     throw new Error(`Nothing to update: pass at least one of ${UPDATABLE_FIELDS.join(", ")}.`);
   }
-  if (params.serviceId !== undefined && params.serviceName === undefined) {
-    throw new Error("When changing serviceId also pass serviceName (the category name from f2b_searchServices).");
-  }
+  assertServicePair(params);
   const service = deal.service && typeof deal.service === "object" ? (deal.service as Record<string, unknown>) : {};
   const body = {
     dealId: params.dealId,
@@ -361,28 +411,53 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "deal_duplicate",
-    "Copy a Secure Deal into a NEW draft (status `new`, new deal number); the original is untouched. Works from any status, including finished and cancelled. Copied: client, line items, currency, who pays the fee, service, deadline, card-payment flag (re-checked against the current card cap). Not copied: promo code (the copy gets the standard fee), delivered work, client messages. The deadline is copied AS-IS even if it is already in the past — when `notes` says so, ask the user for a new date and call deal_update before deal_send. Composite: POST /{dealId}/duplicate → GET the new deal. Show the copy's possiblePayments (received / cost) and get a 'yes' before deal_send.",
+    "Copy a Secure Deal into a NEW draft (status `new`, new deal number), like the cabinet's Duplicate; the original is untouched. Works from any status, including finished and cancelled. Copied from the original: client, service, currency, who pays the fee, line items. NOT copied (same as the cabinet): the deadline — always ask the user for a new serviceDeadline, never reuse the old one; the card-payment flag — ask whether card payment should be allowed (default: bank transfer only); also the promo code, delivered work and client messages. Before calling, offer to change any copied field (client, items, amounts, service, fee payer) and pass the changes; a different client must have the same currency or the copy takes that client's currency. Composite: GET original → GET client → POST /v2/freelancer/secure-deals → GET the new deal. Show the copy's possiblePayments (received / cost) and get an explicit 'yes' before deal_send.",
     {
       dealId: z.number().int().describe(`${FIELD_DOCS.dealId} of the deal to copy`),
+      serviceDeadline: isoDateSchema.describe(`New ${FIELD_DOCS.serviceDeadline}. Required: the old deadline is never copied.`),
+      clientId: z.number().int().optional().describe("Another F2B client id for the copy (from f2b_searchClients). Default: the original's client."),
+      lineItems: z.array(f2bLineItemSchema).min(1).max(10).optional().describe(`${FIELD_DOCS.lineItems}. Replaces the copied items.`),
+      commissionPayer: f2bCommissionPayerEnum.optional().describe(FIELD_DOCS.commissionPayer),
+      serviceId: z.number().int().optional().describe(`${FIELD_DOCS.serviceId}. Pass together with serviceName.`),
+      serviceName: z.string().min(1).max(1024).optional().describe(FIELD_DOCS.serviceName),
+      acquiringEnabled: z.boolean().optional().describe(`${FIELD_DOCS.acquiringEnabled}. Not copied from the original; default false.`),
     },
     { title: "Duplicate Secure Deal" },
-    async ({ dealId }) => {
-      const created = await client.post<DealRecord>(`${DEALS_PATH}/${dealId}/duplicate`, {});
+    async (params) => {
+      assertDeadlineAfterToday(params.serviceDeadline);
+      const source = await loadDeal(client, params.dealId);
+      if (source.source === "offer") {
+        throw new Error("Legacy offers cannot be duplicated here; send the user to https://my.mellow.io/.");
+      }
+      const targetClientId = params.clientId ?? Number(clientOf(source).id);
+      if (!Number.isInteger(targetClientId)) {
+        throw new Error(`Deal ${params.dealId} response lacks the client id; pass clientId explicitly.`);
+      }
+      const currencyId = await resolveInvoiceableClientCurrency(client, targetClientId);
+      const body = buildDuplicateBody(source, { ...params, clientId: targetClientId }, currencyId);
+      const created = await client.post<DealRecord>(DEALS_PATH, body);
       const newId = typeof created?.id === "number" ? created.id : undefined;
       const detail = newId !== undefined ? await refreshDeal(client, newId) : undefined;
-      const deal = detail ?? created;
+      const sourceCurrencyId = readCurrencyId(source);
+      const currencyChanged = sourceCurrencyId !== undefined && sourceCurrencyId !== currencyId;
       const notes = [
-        `New draft created from deal id ${dealId}; nothing was sent to the client.`,
-        ...staleDeadlineNote(deal),
-        "Show the user possiblePayments[].received and .cost and get an explicit 'yes' before deal_send.",
+        `New draft copied from ${dealLabel(source, params.dealId)} with the new deadline ${params.serviceDeadline}; the original is unchanged and nothing was sent to the client.`,
+        ...(currencyChanged
+          ? [
+              `The new client uses a different currency (${idToCurrency(currencyId) ?? currencyId} instead of ${idToCurrency(sourceCurrencyId) ?? sourceCurrencyId}): the item prices were kept as numbers. Confirm the amounts with the user before deal_send.`,
+            ]
+          : []),
+        detail
+          ? "Show the user possiblePayments[].received (freelancer gets) and .cost (client pays), then get an explicit 'yes' before deal_send."
+          : "Could not load the breakdown; call deal_get({dealId}) and show possiblePayments before deal_send.",
       ];
-      return respond(mapCurrencyIdToCode({ deal, notes }));
+      return respond(mapCurrencyIdToCode({ deal: detail ?? created, notes }));
     },
   );
 
   server.tool(
     "deal_get",
-    "Get one Secure Deal with full details. Key fields: `status` (lifecycle below); `possiblePayments[]` — the backend's breakdown per payment method (`type`: bank or acquiring = card): `received` = what the freelancer gets, `cost` = what the client pays in total, plus commission, vat, salesTax, acquiringCommission, freelancerCommission — quote these and NEVER compute fees yourself; `rejectMessage` — the client's latest written reason: the rework request when status is `revision_requested`, the rejection reason when `rejected` (null if the client gave none); `resultSubmissions[]` — work delivered so far; `serviceDeadline`, `reviewDeadlineAt`; `availableActions` — what the freelancer can do now. Lifecycle: new → sent → (client prepays, Mellow holds the money) in_work → client_review → for_payment → finished. Side branches: rejected (deal_update returns it to new), revision_requested (client asked for changes), waiting_deadline_decision (deadline passed during in_work; the client extends or declines), declined_by_customer (money refunded to the client), cancelled. Finishing work, resubmitting and downloading the invoice PDF are not available in this MCP — send the user to https://my.mellow.io/ for those.",
+    "Get one Secure Deal with full details. Key fields: `status` (lifecycle below); `possiblePayments[]` — the backend's breakdown per payment method (`type`: bank or acquiring = card): `received` = what the freelancer gets, `cost` = what the client pays in total, plus commission, vat, salesTax, acquiringCommission, freelancerCommission — quote these and NEVER compute fees yourself; `rejectMessage` — the client's latest written reason: the rework request when status is `revision_requested`, the rejection reason when `rejected` (null if the client gave none); `resultSubmissions[]` — work delivered so far; `serviceDeadline`, `reviewDeadlineAt`; `availableActions` — what the freelancer can do now. Lifecycle: new → sent → (client prepays, Mellow holds the money) in_work → client_review → for_payment → finished. Side branches: rejected (deal_update returns it to new), revision_requested (client asked for changes), waiting_deadline_decision (deadline passed during in_work; the client extends or declines), declined_by_customer (money refunded to the client), cancelled. The payment invoice PDF: deal_downloadInvoicePdf. Finishing work and resubmitting are not available in this MCP — send the user to https://my.mellow.io/ for those.",
     {
       dealId: z.number().int().describe(FIELD_DOCS.dealId),
     },
@@ -426,16 +501,39 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "deal_remind",
-    "Email the client Mellow's standard reminder about a deal that is waiting for their review and prepayment. Allowed only in status `sent`. Confirm with the user first, restating deal number, client and amount; call only after an explicit 'yes'. The backend has NO rate limit: never send reminders on your own initiative, on a schedule, or repeatedly — one reminder per explicit user request. The email (in English) goes to the client's email address with the deal number, amount, service and the deal link. Composite: GET deal (status check) → POST /{dealId}/remind.",
+    "Email the client Mellow's standard reminder (in English, Mellow's template — never write your own email) about a deal that is waiting for their review and prepayment. Allowed only in status `sent`. Two steps, always: (1) call WITHOUT `confirmed` — nothing is sent; the tool returns the recipient (client name and email), deal number and amount; ask the user to confirm, naming the client and the email address the reminder goes to; (2) only after an explicit 'yes', call again with confirmed: true and recipientEmail set to the email you showed (if the deal's recipient changed meanwhile, the tool refuses and you must ask again). There is no frequency limit by product decision — this confirmation is the guard, so never send reminders on your own initiative, on a schedule, or repeatedly. Composite: GET deal (status check) → POST /{dealId}/remind.",
     {
       dealId: z.number().int().describe(FIELD_DOCS.dealId),
+      confirmed: z
+        .boolean()
+        .optional()
+        .describe("Set true only after the user explicitly confirmed this recipient. Omit to get the preview without sending."),
+      recipientEmail: z
+        .string()
+        .optional()
+        .describe("Required with confirmed: true — the recipient email from the preview that the user confirmed."),
     },
     { title: "Remind client about Secure Deal" },
-    async ({ dealId }) => {
-      const deal = await loadDeal(client, dealId);
+    async ({ dealId, confirmed, recipientEmail }) => {
+      const deal = mapCurrencyIdToCode(await loadDeal(client, dealId));
       assertDealStatus(deal, dealId, ["sent"], "send a reminder for");
+      const recipient = reminderRecipient(deal);
+      if (confirmed !== true) {
+        return respond({
+          sent: false,
+          preview: { dealId, number: deal.number ?? null, amount: deal.amount ?? null, currency: deal.currency ?? null, recipient },
+          notes: [
+            `Nothing was sent. Ask the user: send Mellow's reminder about deal ${deal.number ?? dealId} to ${recipient.name ?? "the client"} at ${recipient.email ?? "the client's email"}? After an explicit 'yes', call deal_remind again with confirmed: true and recipientEmail: "${recipient.email ?? ""}".`,
+          ],
+        });
+      }
+      if (!recipientEmail || !recipient.email || recipientEmail.trim().toLowerCase() !== recipient.email.toLowerCase()) {
+        throw new Error(
+          `Not sent: the confirmed recipient (${recipientEmail ?? "none"}) does not match the deal's current client email (${recipient.email ?? "unknown"}). Show the user the current recipient and ask again.`,
+        );
+      }
       await client.post<unknown>(`${DEALS_PATH}/${dealId}/remind`, {});
-      return respond({ ok: true, dealId, number: deal.number ?? null, reminded: true });
+      return respond({ sent: true, dealId, number: deal.number ?? null, recipient });
     },
   );
 

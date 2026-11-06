@@ -115,10 +115,18 @@ describe("registerSecureDealTools", () => {
 
   it("client-visible and destructive tools demand confirmation restating number, client and amount", () => {
     const { description } = setup({});
-    for (const tool of ["deal_send", "deal_remind", "deal_cancel", "deal_update"]) {
+    for (const tool of ["deal_send", "deal_cancel", "deal_update"]) {
       expect(description(tool)).toMatch(/confirm with the user first/i);
       expect(description(tool)).toMatch(/deal number, client and amount/);
     }
+  });
+
+  it("deal_remind demands a two-step confirmation naming the client and the email address", () => {
+    const { description } = setup({});
+    const text = description("deal_remind");
+    expect(text).toMatch(/WITHOUT `confirmed`/);
+    expect(text).toMatch(/naming the client and the email address/);
+    expect(text).toMatch(/confirmed: true/);
   });
 
   it("deal_get points the agent at possiblePayments and rejectMessage and forbids computing fees", () => {
@@ -307,28 +315,94 @@ describe("deal_update (composite merge)", () => {
   });
 });
 
-describe("deal_duplicate", () => {
-  it("POST /duplicate with {} → GET the new deal", async () => {
+describe("deal_duplicate (cabinet-style prefill)", () => {
+  const NEW_DEADLINE = daysFromToday(45);
+
+  it("GET original → GET client → POST a new deal without the old deadline or card flag → GET the copy", async () => {
     const { invoke, calls } = setup({
-      [`POST ${DEALS}/77/duplicate`]: { id: 78, number: "SD-0078", status: "new" },
-      [`GET ${DEALS}/78`]: dealDetail({ id: 78, number: "SD-0078" }),
+      [`GET ${DEALS}/77`]: dealDetail(),
+      ["GET /freelancer/f2b/clients/42"]: { id: 42, status: "active", currency: { id: 3 } },
+      [`POST ${DEALS}`]: { id: 78, number: "SD-0078", status: "new" },
+      [`GET ${DEALS}/78`]: dealDetail({ id: 78, number: "SD-0078", serviceDeadline: `${NEW_DEADLINE}T23:59:59+00:00` }),
     });
-    const result = await invoke("deal_duplicate", { dealId: 77 });
-    expect(calls).toEqual([
-      { method: "POST", path: `${DEALS}/77/duplicate`, body: {} },
-      { method: "GET", path: `${DEALS}/78` },
+    const result = await invoke("deal_duplicate", { dealId: 77, serviceDeadline: NEW_DEADLINE });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      `GET ${DEALS}/77`,
+      "GET /freelancer/f2b/clients/42",
+      `POST ${DEALS}`,
+      `GET ${DEALS}/78`,
     ]);
+    expect(calls[2].body).toEqual({
+      clientId: 42,
+      currencyId: 3,
+      commissionPayer: "customer",
+      serviceId: 12,
+      serviceName: "Design",
+      serviceDeadline: NEW_DEADLINE,
+      lineItems: [{ name: "Logo", quantity: 2, measure: "item", price: 500 }],
+      acquiringEnabled: false,
+    });
+    expect(calls.some((c) => c.path.endsWith("/duplicate"))).toBe(false);
     expect((result.structuredContent.deal as Record<string, unknown>).id).toBe(78);
-    expect(JSON.stringify(result.structuredContent.notes)).not.toMatch(/not after today/);
+    expect(JSON.stringify(result.structuredContent.notes)).toMatch(/original is unchanged/);
   });
 
-  it("flags a copied deadline that is already past", async () => {
-    const { invoke } = setup({
-      [`POST ${DEALS}/77/duplicate`]: { id: 78 },
-      [`GET ${DEALS}/78`]: dealDetail({ id: 78, serviceDeadline: `${PAST}T23:59:59+00:00` }),
+  it("requires a new deadline: the schema rejects a call without one and the handler rejects a past date before any HTTP", async () => {
+    const { invoke, calls, schema } = setup({});
+    expect(schema("deal_duplicate").safeParse({ dealId: 77 }).success).toBe(false);
+    await expect(invoke("deal_duplicate", { dealId: 77, serviceDeadline: PAST })).rejects.toThrow(/must be after today/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("applies overrides: another client (its currency), new items, fee payer and card flag", async () => {
+    const { invoke, calls } = setup({
+      [`GET ${DEALS}/77`]: dealDetail(),
+      ["GET /freelancer/f2b/clients/50"]: { id: 50, status: "not_verified", currency: { id: 2 } },
+      [`POST ${DEALS}`]: { id: 79 },
+      [`GET ${DEALS}/79`]: dealDetail({ id: 79 }),
     });
-    const result = await invoke("deal_duplicate", { dealId: 77 });
-    expect(JSON.stringify(result.structuredContent.notes)).toMatch(/not after today.*deal_update/);
+    await invoke("deal_duplicate", {
+      dealId: 77,
+      serviceDeadline: NEW_DEADLINE,
+      clientId: 50,
+      lineItems: [lineItem],
+      commissionPayer: "freelancer",
+      acquiringEnabled: true,
+    });
+    expect(calls[2].body).toMatchObject({
+      clientId: 50,
+      currencyId: 2,
+      commissionPayer: "freelancer",
+      lineItems: [lineItem],
+      acquiringEnabled: true,
+    });
+  });
+
+  it("rejects serviceName without serviceId (and vice versa) before creating anything", async () => {
+    const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail(), ["GET /freelancer/f2b/clients/42"]: { id: 42, status: "active", currency: { id: 3 } } });
+    await expect(invoke("deal_duplicate", { dealId: 77, serviceDeadline: NEW_DEADLINE, serviceName: "Copywriting" })).rejects.toThrow(
+      /serviceId and serviceName together/,
+    );
+    await expect(invoke("deal_duplicate", { dealId: 77, serviceDeadline: NEW_DEADLINE, serviceId: 5 })).rejects.toThrow(/together/);
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("notes when the new client has a different currency", async () => {
+    const { invoke } = setup({
+      [`GET ${DEALS}/77`]: dealDetail(),
+      ["GET /freelancer/f2b/clients/50"]: { id: 50, status: "active", currency: { id: 2 } },
+      [`POST ${DEALS}`]: { id: 80 },
+      [`GET ${DEALS}/80`]: dealDetail({ id: 80 }),
+    });
+    const result = await invoke("deal_duplicate", { dealId: 77, serviceDeadline: NEW_DEADLINE, clientId: 50 });
+    expect(JSON.stringify(result.structuredContent.notes)).toMatch(/different currency \(USD instead of EUR\)/);
+  });
+
+  it("description says the deadline and the card flag are not copied", () => {
+    const { description } = setup({});
+    const text = description("deal_duplicate");
+    expect(text).toMatch(/NOT copied/);
+    expect(text).toMatch(/never reuse the old one/);
   });
 });
 
@@ -369,25 +443,42 @@ describe("deal_get / deal_list", () => {
 });
 
 describe("deal_remind / deal_cancel", () => {
-  it("deal_remind: GET (sent) → POST /remind with {}", async () => {
-    const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status: "sent" }), [`POST ${DEALS}/77/remind`]: [] });
+  it("deal_remind without confirmed: previews the recipient and sends nothing", async () => {
+    const { invoke, calls } = setup({
+      [`GET ${DEALS}/77`]: dealDetail({ status: "sent", client: { id: 42, email: "client@acme.test", companyName: "Acme Ltd" } }),
+    });
     const result = await invoke("deal_remind", { dealId: 77 });
+    expect(calls).toEqual([{ method: "GET", path: `${DEALS}/77` }]);
+    expect(result.structuredContent).toMatchObject({
+      sent: false,
+      preview: { number: "SD-0077", amount: 1000, currency: "EUR", recipient: { name: "Acme Ltd", email: "client@acme.test" } },
+    });
+    expect(JSON.stringify(result.structuredContent.notes)).toMatch(/Acme Ltd at client@acme.test/);
+  });
+
+  it("deal_remind confirmed with a recipient that no longer matches is refused without sending", async () => {
+    const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status: "sent" }) });
+    await expect(invoke("deal_remind", { dealId: 77, confirmed: true, recipientEmail: "old@acme.test" })).rejects.toThrow(
+      /does not match the deal's current client email \(client@acme.test\)/,
+    );
+    await expect(invoke("deal_remind", { dealId: 77, confirmed: true })).rejects.toThrow(/does not match/);
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it("deal_remind with confirmed: true and the previewed email → GET (sent) → POST /remind with {}", async () => {
+    const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status: "sent" }), [`POST ${DEALS}/77/remind`]: [] });
+    const result = await invoke("deal_remind", { dealId: 77, confirmed: true, recipientEmail: "Client@Acme.test" });
     expect(calls).toEqual([
       { method: "GET", path: `${DEALS}/77` },
       { method: "POST", path: `${DEALS}/77/remind`, body: {} },
     ]);
-    expect(result.structuredContent).toMatchObject({ ok: true, reminded: true, number: "SD-0077" });
+    expect(result.structuredContent).toMatchObject({ sent: true, number: "SD-0077", recipient: { email: "client@acme.test" } });
   });
 
-  it("deal_remind refuses a draft", async () => {
+  it("deal_remind refuses a draft even when confirmed", async () => {
     const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status: "new" }) });
-    await expect(invoke("deal_remind", { dealId: 77 })).rejects.toThrow(/status is 'new'/);
+    await expect(invoke("deal_remind", { dealId: 77, confirmed: true, recipientEmail: "client@acme.test" })).rejects.toThrow(/status is 'new'/);
     expect(calls).toHaveLength(1);
-  });
-
-  it("deal_remind description warns about the missing rate limit", () => {
-    const { description } = setup({});
-    expect(description("deal_remind")).toMatch(/NO rate limit/);
   });
 
   it("deal_cancel: GET (new|sent) → POST /cancel with {}; client is not notified", async () => {

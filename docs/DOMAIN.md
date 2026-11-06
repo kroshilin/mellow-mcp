@@ -458,7 +458,7 @@ Cancellation is always soft — the task remains visible in listTasks with `stat
 
 **"Update a client"** → `f2b_updateClient({clientId, ...fields-to-change})`. Currency and `type` are immutable. MCP composite under the hood: GET → merge → PUT → GET; pass only the fields you want to change.
 
-**"Archive a client"** → `f2b_archiveClient({clientId})`. Soft-delete. Backend rejects new invoices to archived clients with 422; existing sent invoices keep working. There is no un-archive endpoint.
+**"Delete / archive a client"** → name the client (name + email), get a "yes", then `f2b_archiveClient({clientId})`. Soft-delete, no un-archive. Product rule: allowed only when the client has no active invoice or deal — active = any status except `new` (draft), `paid`, `finished`, `cancelled`. The backend itself blocks only on `sent`, so the tool checks the full rule first (invoices by `clientId`, deals by client email) and refuses with the list of blockers.
 
 **"Invoice a client for work"** — single user-intent, mandatory two MCP calls:
 
@@ -480,11 +480,15 @@ Never call `sendInvoiceDraft` without first surfacing the calculation. There is 
 
 **"Cancel / delete an invoice"** → confirm first (number, client, amount, "the client will be notified"), then `f2b_cancelInvoice({invoiceId})`. Allowed only from `new` or `sent`. There is no hard delete.
 
-**"My balance" / "exchange rate"** → `getBalance()` / `getExchangeRate()`.
+**"My balance" / "exchange rate"** → `getBalance()` (per currency, as returned — no conversion) / `getExchangeRate()` (Mellow's company sale rates; the same in the freelancer and client cabinets).
+
+**"Download invoice X"** → `f2b_downloadInvoicePdf({invoiceId})` — statuses `sent` / `paid` / `finished`, verified company client only. **"Download the deal's invoice"** → `deal_downloadInvoicePdf({dealId})` — `sent` / `finished` only. Both return `download.url` (15 minutes).
+
+**"My acts / invoices for completed work" (CoR)** → `cor_listDocuments({type?: 'act'|'invoice', dateFrom?, dateTo?})`, then offer: PDFs one by one (`cor_downloadDocument({documentId})`) or one ZIP to the user's email (`cor_emailDocumentsArchive({same filters})`).
 
 **"Track payment"** → `f2b_getInvoice({invoiceId})`. Inspect `status` (`new` → `sent` → `payment_queued` → `paid`). For lists: `f2b_listInvoices({status?, page?})`.
 
-**"Withdraw funds" / "Acts or payout invoices for CoR work" / "Use Offers / Secure Deal"** → out of scope for this MCP. Direct the user to https://my.mellow.io/. CoR acts and payout invoices are not F2B invoices — never substitute one for the other.
+**"Withdraw funds" / "Submit work for a Secure Deal"** → out of scope for this MCP. Direct the user to https://my.mellow.io/. CoR acts and invoices are not F2B invoices — never substitute one for the other.
 
 ---
 
@@ -561,9 +565,14 @@ Mellow takes a service fee on each invoice paid. Fee payer is chosen per invoice
 These are real Mellow capabilities but not wrapped in this MCP. Direct the user to https://my.mellow.io/ when asked:
 
 - **Withdrawals** from the freelancer's Mellow balance (to bank / card / wallet / crypto; crypto excluded in Russia, North Korea, Iran).
-- **CoR acts and payout invoices** — Mellow auto-generates payout invoices and work-completion acts for Contractor-of-Record tasks; the freelancer downloads them from the web cabinet. These are not F2B invoices.
-- **Secure Deal work submission** (`finish-work` / `resubmit`) — the backend requires a comment plus at least one uploaded file; the MCP has no file-upload transport yet.
-- **Invoice / deal PDF download** — open question on how to deliver the file into the chat.
+- **Secure Deal work submission** (`finish-work` / `resubmit`) — the backend requires a comment plus at least one uploaded file (or the "delivered outside the platform" flag); the MCP has no file-upload transport yet.
+
+### 10.7a Files and documents
+
+claude.ai tool results carry only text and images, so files are relayed as short-lived links: the tool downloads the PDF with the user's token, stores it in KV for 15 minutes under a random 256-bit token and returns `download.url` on this Worker (`/files/<token>/<name>`). No credentials are stored.
+
+- **F2B invoice / deal payment PDF** — `GET /freelancer/f2b/invoices/{id}/download-payment-invoice` → `{fileId, statusId}` (poll until 3/4) → `GET /files/{fileId}`. One endpoint for invoices and deals. Backend voter: status `sent` / `paid` / `finished`, client `legal` + `active`. Product: final; deals `sent` / `finished`; no PDF for individuals.
+- **CoR documents** — `GET /freelancer/documents` (type 6 invoice, 7 act; row `id` = file id) → `GET /files/{id}`. ZIP: `GET /freelancer/documents/download` queues an archive emailed to the freelancer (404 if nothing matches).
 
 ### 10.8 Secure Deal (escrow)
 
@@ -573,8 +582,9 @@ A Secure Deal is the same backend entity as an F2B invoice (`f2b_invoices`, `wor
 |---|---|---|
 | Create / send | `deal_create` → `deal_send` | Show `possiblePayments[].received` / `.cost` and confirm before sending |
 | Edit | `deal_update` | `new` / `sent` / `rejected`; editing `sent` emails the client; editing `rejected` returns it to `new` |
-| Duplicate | `deal_duplicate` | Copy lands in `new`; old deadline is copied as-is |
+| Duplicate | `deal_duplicate` | Like the cabinet: GET original → POST a new deal with client, service, fee payer, items. Deadline and card flag are NOT copied — a new `serviceDeadline` is required |
 | Status / list / summary | `deal_get`, `deal_list`, `deal_summary` | List search covers deal number, client name and email only |
-| Remind | `deal_remind` | `sent` only; Mellow template; no backend rate limit |
+| Remind | `deal_remind` | `sent` only; Mellow template. Two-step: preview (recipient name + email) → user confirms → `confirmed: true`. No frequency limit by product decision |
+| Invoice PDF | `deal_downloadInvoicePdf` | `sent` / `finished`, verified company client |
 | Cancel | `deal_cancel` | `new` / `sent`; the client is not emailed, their link stops working |
-| Clients | `f2b_searchClients`, `f2b_createClient`, `f2b_createIndividualClient`, `f2b_createClientFromCompany` | Archiving a client is blocked only by `sent` items, not by deals in progress (open backend question) |
+| Clients | `f2b_searchClients`, `f2b_createClient`, `f2b_createIndividualClient`, `f2b_createClientFromCompany` | Deleting a client: `f2b_archiveClient` refuses while any invoice/deal is active (MCP-side check; backend fix pending) |
