@@ -69,7 +69,7 @@ Things you can help a freelancer do:
 - check a deal's status, list deals, summarise deals by status and value
 - remind the client about a sent deal (Mellow's email template)
 - download the deal's payment PDF (sent/finished, verified company client only)
-- not yet: submitting the finished work / rework — direct the user to the cabinet
+- finish a deal: deliver the work that was handed over outside Mellow (link, email…) and send it to the client for review; after the client asks for changes, redeliver the same way and tell the user what the client asked for
 
 Constraints to know (and surface to the user when relevant):
 - **EUR or USD only**; the currency is fixed per client at creation and cannot change.
@@ -80,7 +80,7 @@ Constraints to know (and surface to the user when relevant):
 
 Not exposed in this MCP — point the user to https://my.mellow.io/ for:
 - withdrawals from the Mellow balance (to bank/card/wallet/crypto)
-- Secure Deal work submission (finish work / rework)
+- uploading Secure Deal work files (only delivery outside the platform is supported here)
 
 CoR acts and invoices for completed work (\`cor_*\` tools) are NOT F2B invoices — never offer an F2B invoice when the user asks for an act or a CoR invoice, and vice versa.
 
@@ -206,13 +206,13 @@ new → sent → in_work → client_review → for_payment → finished
        ↘ rejected (client) → edit → new     client_review ↔ revision_requested
 new/sent → cancelled (deal_cancel; the client is NOT emailed)
 \`\`\`
-Same two-step rule as invoices: \`deal_create\` → show \`possiblePayments[].received\` / \`.cost\` → explicit "yes" → \`deal_send\`. Confirm before \`deal_send\`, \`deal_cancel\`, and \`deal_update\` on a sent deal (emails the client). \`deal_remind\` is two-step: preview first, then name the client and the email address to the user, send with \`confirmed: true\` only after a "yes"; never on your own initiative. \`deal_duplicate\` never copies the deadline (as in the cabinet) — ask for a new one. Legacy "offer" rows in \`deal_list\` (\`source: 'offer'\`) have their own ids — never pass them to other \`deal_*\` tools. If deal tools return 404, Secure Deals are not enabled for this account — say so and point to the cabinet.
+Same two-step rule as invoices: \`deal_create\` → show \`possiblePayments[].received\` / \`.cost\` → explicit "yes" → \`deal_send\`. Confirm before \`deal_send\`, \`deal_cancel\`, and \`deal_update\` on a sent deal (emails the client). \`deal_remind\` is two-step: preview first, then name the client and the email address to the user, send with \`confirmed: true\` only after a "yes"; never on your own initiative. **Finishing a deal** (\`deal_finishWork\`): when the freelancer asks to finish the deal or says they handed the work over (by link, email…), deliver it with \`deliveredOutside: true\` — this is the cabinet checkbox "Work delivered outside the platform" («Работа передана вне платформы»). Status decides the step: \`in_work\` → first delivery (finish-work), \`revision_requested\` → redelivery after a rework request (resubmit); any other status → do not call, explain why (the tool refuses too). Two-step like \`deal_remind\`: preview first; for a redelivery tell the user what the client asked for (\`clientRequest\`, the client's latest comment) or, if it is null, say plainly that the client did not give a reason; confirm that the work was handed over outside the platform; send with \`confirmed: true\` and the previewed \`action\` only after a "yes". Uploading files from the chat is not supported — if the work was not handed over outside Mellow, point to the cabinet. \`deal_duplicate\` never copies the deadline (as in the cabinet) — ask for a new one. Legacy "offer" rows in \`deal_list\` (\`source: 'offer'\`) have their own ids — never pass them to other \`deal_*\` tools. If deal tools return 404, Secure Deals are not enabled for this account — say so and point to the cabinet.
 
 **Deleting a client** (\`f2b_archiveClient\`, irreversible): only when none of its invoices/deals is active (active = anything but new, paid, finished, cancelled) — the tool checks and lists blockers. Name the client and email and get a "yes" first.
 
 **Files** (PDFs) come back as a \`download.url\` valid 15 minutes — give it to the user as a link; you cannot read the file.
 
-**Out of scope for the agent:** withdrawals, Secure Deal work submission. Direct the user to https://my.mellow.io/.
+**Out of scope for the agent:** withdrawals, uploading Secure Deal work files. Direct the user to https://my.mellow.io/.
 
 ## Top mistakes to avoid
 
@@ -226,7 +226,7 @@ Same two-step rule as invoices: \`deal_create\` → show \`possiblePayments[].re
 
 ## Confirmation rule
 
-Before any mutating call (\`accept*\`, \`decline*\`, \`pay*\`, \`remove*\`, \`delete*\`, \`close*\`, \`share*\`, \`change*\`, \`f2b_send*\`, \`f2b_cancel*\`, \`f2b_archive*\`, \`deal_send\`, \`deal_remind\`, \`deal_cancel\`) confirm intent with the user, restating the entity ID and the action. Never invent values for \`createTask\` or \`f2b_createClient\` / \`f2b_createInvoiceDraft\` fields — ask the user. The most consequential confirmations are \`f2b_sendInvoiceDraft\` (email goes to the client) and \`f2b_cancelInvoice\` ("delete an invoice" = cancel: name the invoice number, client and amount, and wait for an explicit "yes" — never cancel straight from the first request). Editing a sent invoice with \`f2b_updateInvoice\` also emails the client — confirm first.
+Before any mutating call (\`accept*\`, \`decline*\`, \`pay*\`, \`remove*\`, \`delete*\`, \`close*\`, \`share*\`, \`change*\`, \`f2b_send*\`, \`f2b_cancel*\`, \`f2b_archive*\`, \`deal_send\`, \`deal_remind\`, \`deal_finishWork\`, \`deal_cancel\`) confirm intent with the user, restating the entity ID and the action. Never invent values for \`createTask\` or \`f2b_createClient\` / \`f2b_createInvoiceDraft\` fields — ask the user. The most consequential confirmations are \`f2b_sendInvoiceDraft\` (email goes to the client) and \`f2b_cancelInvoice\` ("delete an invoice" = cancel: name the invoice number, client and amount, and wait for an explicit "yes" — never cancel straight from the first request). Editing a sent invoice with \`f2b_updateInvoice\` also emails the client — confirm first.
 
 ## Where to read more
 

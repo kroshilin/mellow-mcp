@@ -565,7 +565,7 @@ Mellow takes a service fee on each invoice paid. Fee payer is chosen per invoice
 These are real Mellow capabilities but not wrapped in this MCP. Direct the user to https://my.mellow.io/ when asked:
 
 - **Withdrawals** from the freelancer's Mellow balance (to bank / card / wallet / crypto; crypto excluded in Russia, North Korea, Iran).
-- **Secure Deal work submission** (`finish-work` / `resubmit`) — the backend requires a comment plus at least one uploaded file (or the "delivered outside the platform" flag); the MCP has no file-upload transport yet.
+- **Uploading Secure Deal work files** — the MCP has no file-upload transport yet. Delivery outside the platform is supported (`deal_finishWork`, §10.8).
 
 ### 10.7a Files and documents
 
@@ -576,7 +576,7 @@ claude.ai tool results carry only text and images, so files are relayed as short
 
 ### 10.8 Secure Deal (escrow)
 
-A Secure Deal is the same backend entity as an F2B invoice (`f2b_invoices`, `work_completed = false`) and shares the client list. Flow: freelancer creates a draft (`deal_create`) → sends (`deal_send`) → client prepays, money is held (`in_work`) → freelancer delivers (cabinet only for now) → client accepts (`for_payment`) → automatic payout (`finished`). Gated per user by the `secureDeals` feature flag — 404 means it is off.
+A Secure Deal is the same backend entity as an F2B invoice (`f2b_invoices`, `work_completed = false`) and shares the client list. Flow: freelancer creates a draft (`deal_create`) → sends (`deal_send`) → client prepays, money is held (`in_work`) → freelancer delivers (`deal_finishWork`, `client_review`; after a rework request `revision_requested` → redelivers the same way) → client accepts (`for_payment`) → automatic payout (`finished`). Gated per user by the `secureDeals` feature flag — 404 means it is off.
 
 | Intent | Tool | Notes |
 |---|---|---|
@@ -585,6 +585,7 @@ A Secure Deal is the same backend entity as an F2B invoice (`f2b_invoices`, `wor
 | Duplicate | `deal_duplicate` | Like the cabinet: GET original → POST a new deal with client, service, fee payer, items. Deadline and card flag are NOT copied — a new `serviceDeadline` is required |
 | Status / list / summary | `deal_get`, `deal_list`, `deal_summary` | List search covers deal number, client name and email only |
 | Remind | `deal_remind` | `sent` only; Mellow template. Two-step: preview (recipient name + email) → user confirms → `confirmed: true`. No frequency limit by product decision |
+| Deliver work | `deal_finishWork` | `deliveredOutside: true` = cabinet checkbox "Work delivered outside the platform" («Работа передана вне платформы»). `in_work` → `POST /v2/freelancer/secure-deals/{dealId}/finish-work`; `revision_requested` → `POST …/{dealId}/resubmit` (body `{deliveredOutside: true}`, both → `FinishDealWorkCommand`). Other statuses are refused MCP-side. Two-step: preview (step, client's request = `rejectMessage`, or "no reason given") → user confirms → `confirmed: true` + `action`. No file upload |
 | Invoice PDF | `deal_downloadInvoicePdf` | `sent` / `finished`, verified company client |
 | Cancel | `deal_cancel` | `new` / `sent`; the client is not emailed, their link stops working |
 | Clients | `f2b_searchClients`, `f2b_createClient`, `f2b_createClientFromCompany` | Deleting a client: `f2b_archiveClient` refuses while any invoice/deal is active (MCP-side check; backend fix pending) |
