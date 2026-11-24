@@ -107,7 +107,6 @@ describe("registerSecureDealTools", () => {
         "deal_summary",
         "deal_update",
         "f2b_createClientFromCompany",
-        "f2b_createIndividualClient",
         "f2b_searchClients",
       ].sort(),
     );
@@ -544,24 +543,10 @@ describe("deal_summary (composite)", () => {
 });
 
 describe("client tools", () => {
-  it("f2b_createIndividualClient POSTs fullName/email/country/currencyId", async () => {
-    const { invoke, calls } = setup({
-      "POST /freelancer/f2b/clients/individual": { id: 9, type: "individual", currency: { currency: "EUR", id: 3 } },
-    });
-    const result = await invoke("f2b_createIndividualClient", {
-      fullName: "Jane Doe",
-      email: "jane@example.test",
-      country: "DE",
-      currency: "EUR",
-    });
-    expect(calls).toEqual([
-      {
-        method: "POST",
-        path: "/freelancer/f2b/clients/individual",
-        body: { fullName: "Jane Doe", email: "jane@example.test", country: "DE", currencyId: 3 },
-      },
-    ]);
-    expect(result.structuredContent.currency).toBe("EUR");
+  it("deal_create offers no individual (private person) clients and no individual limits", () => {
+    const { description } = setup({});
+    expect(description("deal_create")).not.toMatch(/individual|1,000/i);
+    expect(description("deal_create")).not.toMatch(/f2b_createIndividualClient|f2b_createClientFromCompany/);
   });
 
   it("f2b_searchClients queries the unified list and maps currencyId", async () => {

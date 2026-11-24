@@ -2,10 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { asStructuredList, asStructuredObject, type MellowClient } from "../../mellow-client";
 import {
-  currencyToId,
   f2bClientStatusEnum,
   f2bCommissionPayerEnum,
-  f2bCurrencyEnum,
   f2bLineItemSchema,
   idToCurrency,
   mapCurrencyIdToCode,
@@ -318,7 +316,7 @@ async function fetchAllDealRows(client: MellowClient) {
 export function registerSecureDealTools(server: McpServer, client: MellowClient) {
   server.tool(
     "deal_create",
-    "Create a Secure Deal as a DRAFT (status `new`). Nothing is sent and the client is not notified. A Secure Deal is escrow: the client prepays, Mellow holds the money, the freelancer delivers, the client accepts, Mellow pays the freelancer. Before calling, collect from the user: the client (clientId from f2b_searchClients; create one with f2b_createClient / f2b_createClientFromCompany / f2b_createIndividualClient if needed), the service category (serviceId + serviceName from f2b_searchServices), the deadline, line items (the work description goes in the item names), who pays Mellow's fee, and whether card payment is allowed. Currency is the client's currency (fixed per client). Composite: GET client → POST /v2/freelancer/secure-deals → GET the new deal. The returned `deal.possiblePayments[]` is the backend's breakdown per payment method (type bank / acquiring=card): `received` = what the freelancer gets, `cost` = what the client pays. Show both to the user and get an explicit 'yes' before deal_send. NEVER compute fees yourself. Backend limits: ≤ 10 line items; deal amount ≤ 10 000 in client currency; an individual (non-company) client ≤ €1,000 per calendar month across all its invoices and deals; the client must not be archived or suspended; serviceDeadline must be after today.",
+    "Create a Secure Deal as a DRAFT (status `new`). Nothing is sent and the client is not notified. A Secure Deal is escrow: the client prepays, Mellow holds the money, the freelancer delivers, the client accepts, Mellow pays the freelancer. Before calling, collect from the user: the client (clientId from f2b_searchClients; if the client is new, create it with f2b_createClient), the service category (serviceId + serviceName from f2b_searchServices), the deadline, line items (the work description goes in the item names), who pays Mellow's fee, and whether card payment is allowed. Currency is the client's currency (fixed per client). Composite: GET client → POST /v2/freelancer/secure-deals → GET the new deal. The returned `deal.possiblePayments[]` is the backend's breakdown per payment method (type bank / acquiring=card): `received` = what the freelancer gets, `cost` = what the client pays. Show both to the user and get an explicit 'yes' before deal_send. NEVER compute fees yourself. Backend limits: ≤ 10 line items; deal amount ≤ 10 000 in client currency; the client must not be archived or suspended; serviceDeadline must be after today.",
     {
       clientId: z.number().int().describe("F2B client id (an `id` from f2b_searchClients rows with entryType 'client')"),
       serviceId: z.number().int().describe(FIELD_DOCS.serviceId),
@@ -580,28 +578,6 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
   );
 
   server.tool(
-    "f2b_createIndividualClient",
-    "Create an F2B client who is a private person (individual), not a company: fullName, email, country, currency (EUR or USD, fixed forever). For a company use f2b_createClient; ask the user which it is if unclear. Limits: an individual client can be billed at most €1,000 (EUR equivalent) per calendar month, summed over all its non-cancelled invoices and Secure Deals created that month. Caveat: the backend accepts individual clients for both invoices and Secure Deals, but Mellow's current web cabinet only creates company clients, and the client-side Secure Deal page currently tells an individual client that verification for individuals isn't available yet and to contact the freelancer — warn the user that such a client may be unable to complete payment. Status starts `not_verified`. Use the returned client's `id` as clientId.",
-    {
-      fullName: z.string().min(1).describe("The person's full name, no HTML"),
-      email: z.string().email().describe("Email where the deal / invoice link is sent"),
-      country: z.string().length(2).describe("ISO-3166 alpha-2 country code, e.g. DE, US"),
-      currency: f2bCurrencyEnum.describe("EUR or USD. Fixed at creation — every deal / invoice to this client uses it."),
-    },
-    { title: "Create F2B individual client" },
-    async (params) => {
-      const body = {
-        fullName: params.fullName,
-        email: params.email,
-        country: params.country,
-        currencyId: currencyToId(params.currency),
-      };
-      const result = await client.post<unknown>("/freelancer/f2b/clients/individual", body);
-      return respond(mapCurrencyIdToCode(result));
-    },
-  );
-
-  server.tool(
     "f2b_searchClients",
     "Search the freelancer's clients for Secure Deals and invoices by name or email (`search` matches company name, person's full name, email, and company brand). The list also contains companies the freelancer already works with on Mellow that are not F2B clients yet. Each row: entryType ('client' | 'company'), id (F2B client id — use it as clientId; null on company rows), companyId, companyName, email, country, currency, status, clientType ('legal' | 'individual'), needsCreate. Rows with needsCreate=true are connected companies without an F2B client: call f2b_createClientFromCompany({companyId}) first and use the returned client's id. Archived and suspended clients are hidden unless you pass `status` explicitly; the status filter applies to client rows only (company rows always appear). Paginated: page, size.",
     {
@@ -631,7 +607,7 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "f2b_createClientFromCompany",
-    "Turn a connected company (an f2b_searchClients row with needsCreate=true) into an F2B client, or return the existing F2B client if one was already made for that company. A new client is `active` straight away (the company is already verified on Mellow) and takes the company's name, admin email, country and currency. Use the returned `id` as clientId for deal_create or f2b_createInvoiceDraft; if the returned client is archived it cannot be used. Errors: 403 if the company is not connected to the freelancer; 409 if the company's currency is not EUR/USD or it has no country — then create the client with f2b_createClient instead.",
+    "Technical step, not a way to create a new client: use it only when the user picked a connected company (an f2b_searchClients row with needsCreate=true) for an invoice or deal. Never offer it as an option when the user asks to create a client or what is needed for that — new clients are created only with f2b_createClient. Turns the connected company into an F2B client, or returns the existing F2B client if one was already made for that company. A new client is `active` straight away (the company is already verified on Mellow) and takes the company's name, admin email, country and currency. Use the returned `id` as clientId for deal_create or f2b_createInvoiceDraft; if the returned client is archived it cannot be used. Errors: 403 if the company is not connected to the freelancer; 409 if the company's currency is not EUR/USD or it has no country — then create the client with f2b_createClient instead.",
     {
       companyId: z.number().int().positive().describe("`companyId` from an f2b_searchClients row with needsCreate=true"),
     },

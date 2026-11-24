@@ -587,4 +587,4 @@ A Secure Deal is the same backend entity as an F2B invoice (`f2b_invoices`, `wor
 | Remind | `deal_remind` | `sent` only; Mellow template. Two-step: preview (recipient name + email) → user confirms → `confirmed: true`. No frequency limit by product decision |
 | Invoice PDF | `deal_downloadInvoicePdf` | `sent` / `finished`, verified company client |
 | Cancel | `deal_cancel` | `new` / `sent`; the client is not emailed, their link stops working |
-| Clients | `f2b_searchClients`, `f2b_createClient`, `f2b_createIndividualClient`, `f2b_createClientFromCompany` | Deleting a client: `f2b_archiveClient` refuses while any invoice/deal is active (MCP-side check; backend fix pending) |
+| Clients | `f2b_searchClients`, `f2b_createClient`, `f2b_createClientFromCompany` | Deleting a client: `f2b_archiveClient` refuses while any invoice/deal is active (MCP-side check; backend fix pending) |

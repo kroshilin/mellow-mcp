@@ -575,7 +575,7 @@
 3. **`f2b_createClient({companyName, email, country, currency})`**. Returns the new client object. Record `clientId`. State starts `not_verified` — that does **not** block invoicing.
 4. **Collect invoice inputs from the user:**
    - service → `serviceId`: offer the service of a previous invoice if the user has one (`f2b_listInvoices` → `service`), otherwise `f2b_searchServices({search: '<key word>'})` and confirm the match. Never send the user to the cabinet to look up an id.
-   - `serviceName` (invoice title, no HTML).
+   - `serviceName` = the found service's title (fill it in yourself — never ask the user for an invoice title).
    - work period `serviceStartDate` + `serviceEndDate` (ISO) — when the work was done; NOT a due date.
    - `invoiceDate` (must be ≤ today).
    - `lineItems[]` (1-10 items, each `{name, quantity, measure, price}`; total ≤ 10 000 in client currency).
