@@ -134,7 +134,7 @@ async function publishPaymentPdf(
 export function registerF2bDocumentTools(server: McpServer, client: MellowClient, deps: F2bDocumentToolDeps) {
   server.tool(
     "f2b_downloadInvoicePdf",
-    "Download the payment invoice PDF of an F2B invoice (the same file as 'Download invoice' in the Mellow cabinet). Available only when the invoice status is sent, paid or finished AND the client is a verified company (client status 'active'); never for individual clients or for drafts (status new). To find the invoice by its number, use f2b_listInvoices first and take the row's id. Returns a short-lived download link (download.url, valid 15 minutes) — show it to the user as a clickable link. Composite: GET invoice (pre-check) → GET /{id}/download-payment-invoice (waits until the PDF is rendered) → GET /files/{fileId}.",
+    "Download the payment invoice PDF of an F2B invoice (the same file as 'Download invoice' in the Mellow cabinet). Available only when the invoice status is sent, paid or finished AND the client is a verified company (client status 'active'); never for drafts (status new). To find the invoice by its number, use f2b_listInvoices first and take the row's id. Returns a short-lived download link (download.url, valid 15 minutes) — show it to the user as a clickable link. Composite: GET invoice (pre-check) → GET /{id}/download-payment-invoice (waits until the PDF is rendered) → GET /files/{fileId}.",
     {
       invoiceId: z.number().int().describe("Numeric F2B invoice id (from f2b_listInvoices / f2b_getInvoice — not the invoice number)"),
     },
@@ -148,7 +148,7 @@ export function registerF2bDocumentTools(server: McpServer, client: MellowClient
 
   server.tool(
     "deal_downloadInvoicePdf",
-    "Download the payment invoice PDF of a Secure Deal. Available only when the deal status is sent or finished AND the client is a verified company (client status 'active'); not for individual clients, drafts (new) or deals in work, review or awaiting payment. To find the deal by its number, use deal_list with `search` first and take the row's id. Returns a short-lived download link (download.url, valid 15 minutes) — show it to the user as a clickable link. Composite: GET deal (pre-check) → GET /freelancer/f2b/invoices/{id}/download-payment-invoice (waits until the PDF is rendered) → GET /files/{fileId}.",
+    "Download the payment invoice PDF of a Secure Deal. Available only when the deal status is sent or finished AND the client is a verified company (client status 'active'); not for drafts (new) or deals in work, review or awaiting payment. To find the deal by its number, use deal_list with `search` first and take the row's id. Returns a short-lived download link (download.url, valid 15 minutes) — show it to the user as a clickable link. Composite: GET deal (pre-check) → GET /freelancer/f2b/invoices/{id}/download-payment-invoice (waits until the PDF is rendered) → GET /files/{fileId}.",
     {
       dealId: z.number().int().describe("Numeric deal id (the `id` from deal_list — not the deal number)"),
     },

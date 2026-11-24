@@ -198,7 +198,7 @@ export function registerFreelancerPrompts(server: McpServer) {
               "",
               "Sequence (assuming client exists):",
               "1. Collect invoice inputs from me — ask one at a time, do not invent:",
-              "   - `serviceId` (Mellow service taxonomy, leaf only), `serviceName`, `serviceStartDate`, `serviceEndDate` (ISO).",
+              "   - `serviceId` (Mellow service taxonomy, leaf only; `serviceName` = that service's title — don't ask me for an invoice title), `serviceStartDate`, `serviceEndDate` (ISO).",
               "   - `invoiceDate` (must be ≤ today).",
               "   - `lineItems[]` (1-10 items, each `{name, quantity, measure, price}`; total ≤ 10 000 in client currency).",
               "   - `commissionPayer`: `freelancer` (deducts from your payable) or `customer` (added to client's total).",

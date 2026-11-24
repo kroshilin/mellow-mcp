@@ -2,10 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { asStructuredList, asStructuredObject, type MellowClient } from "../../mellow-client";
 import {
-  currencyToId,
   f2bClientStatusEnum,
   f2bCommissionPayerEnum,
-  f2bCurrencyEnum,
   f2bLineItemSchema,
   idToCurrency,
   mapCurrencyIdToCode,
@@ -49,6 +47,42 @@ const dealStatusEnum = z.enum(DEAL_STATUS);
 const DEAL_EDITABLE_STATUSES = ["new", "sent", "rejected"];
 /** F2BVoter::canCancelInvoice / Invoice::cancel. */
 const DEAL_CANCELLABLE_STATUSES = ["new", "sent"];
+/**
+ * Work submission (SecureDealController finish-work / resubmit → FinishDealWorkCommand).
+ * The deal status picks the endpoint: first delivery from in_work, redelivery
+ * after a rework request from revision_requested. Any other status is an
+ * illegal transition on the backend, so the MCP refuses before calling it.
+ */
+const SUBMIT_ACTION_BY_STATUS = { in_work: "finish-work", revision_requested: "resubmit" } as const;
+type SubmitAction = (typeof SUBMIT_ACTION_BY_STATUS)[keyof typeof SUBMIT_ACTION_BY_STATUS];
+const submitActionEnum = z.enum(["finish-work", "resubmit"]);
+
+/** Why work can't be delivered in a given status — shown to the user as is. */
+const SUBMIT_REFUSAL_BY_STATUS: Record<string, string> = {
+  new: "the deal is still a draft: send it to the client and wait for the prepayment first",
+  sent: "the client has not prepaid yet; work can be delivered once the deal is in work",
+  rejected: "the client rejected the deal; edit it (deal_update) and send it again",
+  client_review: "the work is already delivered and the client is reviewing it",
+  for_payment: "the client already accepted the work; the payout is in progress",
+  finished: "the deal is already finished",
+  waiting_deadline_decision: "the deadline has passed; the client must extend it or decline the deal first",
+  declined_by_customer: "the client declined the deal and the money was refunded",
+  dispute_in_progress: "a dispute is in progress",
+  cancelled: "the deal is cancelled",
+};
+
+function submitActionFor(deal: DealRecord, dealId: number): { status: string; action: SubmitAction } {
+  const status = typeof deal.status === "string" ? deal.status : "unknown";
+  const action = SUBMIT_ACTION_BY_STATUS[status as keyof typeof SUBMIT_ACTION_BY_STATUS];
+  if (!action) {
+    const reason = SUBMIT_REFUSAL_BY_STATUS[status] ?? "work can only be delivered while the deal is in work";
+    throw new Error(
+      `Cannot deliver the work for ${dealLabel(deal, dealId)}: its status is '${status}' — ${reason}. Delivery is allowed only in 'in_work' (first delivery) or 'revision_requested' (redelivery after a rework request). Nothing was sent; explain this to the user.`,
+    );
+  }
+  return { status, action };
+}
+
 /** Linked card payment states that freeze a deal's terms (CardPaymentTermsLock). */
 const CARD_HOLD_PAYMENT_STATUSES = ["authorized", "completed"];
 
@@ -318,7 +352,7 @@ async function fetchAllDealRows(client: MellowClient) {
 export function registerSecureDealTools(server: McpServer, client: MellowClient) {
   server.tool(
     "deal_create",
-    "Create a Secure Deal as a DRAFT (status `new`). Nothing is sent and the client is not notified. A Secure Deal is escrow: the client prepays, Mellow holds the money, the freelancer delivers, the client accepts, Mellow pays the freelancer. Before calling, collect from the user: the client (clientId from f2b_searchClients; create one with f2b_createClient / f2b_createClientFromCompany / f2b_createIndividualClient if needed), the service category (serviceId + serviceName from f2b_searchServices), the deadline, line items (the work description goes in the item names), who pays Mellow's fee, and whether card payment is allowed. Currency is the client's currency (fixed per client). Composite: GET client → POST /v2/freelancer/secure-deals → GET the new deal. The returned `deal.possiblePayments[]` is the backend's breakdown per payment method (type bank / acquiring=card): `received` = what the freelancer gets, `cost` = what the client pays. Show both to the user and get an explicit 'yes' before deal_send. NEVER compute fees yourself. Backend limits: ≤ 10 line items; deal amount ≤ 10 000 in client currency; an individual (non-company) client ≤ €1,000 per calendar month across all its invoices and deals; the client must not be archived or suspended; serviceDeadline must be after today.",
+    "Create a Secure Deal as a DRAFT (status `new`). Nothing is sent and the client is not notified. A Secure Deal is escrow: the client prepays, Mellow holds the money, the freelancer delivers, the client accepts, Mellow pays the freelancer. Before calling, collect from the user: the client (clientId from f2b_searchClients; if the client is new, create it with f2b_createClient), the service category (serviceId + serviceName from f2b_searchServices), the deadline, line items (the work description goes in the item names), who pays Mellow's fee, and whether card payment is allowed. Currency is the client's currency (fixed per client). Composite: GET client → POST /v2/freelancer/secure-deals → GET the new deal. The returned `deal.possiblePayments[]` is the backend's breakdown per payment method (type bank / acquiring=card): `received` = what the freelancer gets, `cost` = what the client pays. Show both to the user and get an explicit 'yes' before deal_send. NEVER compute fees yourself. Backend limits: ≤ 10 line items; deal amount ≤ 10 000 in client currency; the client must not be archived or suspended; serviceDeadline must be after today.",
     {
       clientId: z.number().int().describe("F2B client id (an `id` from f2b_searchClients rows with entryType 'client')"),
       serviceId: z.number().int().describe(FIELD_DOCS.serviceId),
@@ -457,7 +491,7 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "deal_get",
-    "Get one Secure Deal with full details. Key fields: `status` (lifecycle below); `possiblePayments[]` — the backend's breakdown per payment method (`type`: bank or acquiring = card): `received` = what the freelancer gets, `cost` = what the client pays in total, plus commission, vat, salesTax, acquiringCommission, freelancerCommission — quote these and NEVER compute fees yourself; `rejectMessage` — the client's latest written reason: the rework request when status is `revision_requested`, the rejection reason when `rejected` (null if the client gave none); `resultSubmissions[]` — work delivered so far; `serviceDeadline`, `reviewDeadlineAt`; `availableActions` — what the freelancer can do now. Lifecycle: new → sent → (client prepays, Mellow holds the money) in_work → client_review → for_payment → finished. Side branches: rejected (deal_update returns it to new), revision_requested (client asked for changes), waiting_deadline_decision (deadline passed during in_work; the client extends or declines), declined_by_customer (money refunded to the client), cancelled. The payment invoice PDF: deal_downloadInvoicePdf. Finishing work and resubmitting are not available in this MCP — send the user to https://my.mellow.io/ for those.",
+    "Get one Secure Deal with full details. Key fields: `status` (lifecycle below); `possiblePayments[]` — the backend's breakdown per payment method (`type`: bank or acquiring = card): `received` = what the freelancer gets, `cost` = what the client pays in total, plus commission, vat, salesTax, acquiringCommission, freelancerCommission — quote these and NEVER compute fees yourself; `rejectMessage` — the client's latest written reason: the rework request when status is `revision_requested`, the rejection reason when `rejected` (null if the client gave none); `resultSubmissions[]` — work delivered so far; `serviceDeadline`, `reviewDeadlineAt`; `availableActions` — what the freelancer can do now. Lifecycle: new → sent → (client prepays, Mellow holds the money) in_work → client_review → for_payment → finished. Side branches: rejected (deal_update returns it to new), revision_requested (client asked for changes), waiting_deadline_decision (deadline passed during in_work; the client extends or declines), declined_by_customer (money refunded to the client), cancelled. The payment invoice PDF: deal_downloadInvoicePdf. Delivering the work (in_work) or redelivering after a rework request (revision_requested): deal_finishWork.",
     {
       dealId: z.number().int().describe(FIELD_DOCS.dealId),
     },
@@ -538,6 +572,82 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
   );
 
   server.tool(
+    "deal_finishWork",
+    "Deliver the work on a Secure Deal and hand it to the client for review — the cabinet's 'Finish work' with the checkbox 'Work delivered outside the platform' («Работа передана вне платформы») ticked, which is what `deliveredOutside: true` means. Use it when the freelancer asks to finish/complete the deal or says they already handed the work over outside Mellow (by link, email, etc.). The deal status decides the step: `in_work` → first delivery (POST /{dealId}/finish-work); `revision_requested` → redelivery after the client asked for changes (POST /{dealId}/resubmit). Any other status is refused before calling the backend — tell the user why. Two steps, always: (1) call WITHOUT `confirmed` — nothing is sent; the tool returns the deal number, client, amount, which step it is and, for a redelivery, the client's request (`clientRequest`, the client's latest comment; null when the client gave no reason — then say plainly that the client did not give a reason); restate it to the user and ask to confirm that the work was handed over outside the platform; (2) only after an explicit 'yes', call again with confirmed: true and `action` set to the previewed step (if the deal's status changed meanwhile, the tool refuses and you must ask again). Only `deliveredOutside: true` is supported: uploading files from the chat is not available — if the work was not handed over outside Mellow, send the user to https://my.mellow.io/ to deliver it there. After delivery the deal goes to `client_review`; the client accepts (then Mellow pays the freelancer) or asks for changes again (`revision_requested`).",
+    {
+      dealId: z.number().int().describe(FIELD_DOCS.dealId),
+      deliveredOutside: z
+        .boolean()
+        .describe(
+          "The cabinet checkbox 'Work delivered outside the platform' («Работа передана вне платформы»). Must be true: only off-platform delivery is supported here.",
+        ),
+      confirmed: z
+        .boolean()
+        .optional()
+        .describe("Set true only after the user explicitly confirmed the delivery. Omit to get the preview without sending."),
+      action: submitActionEnum
+        .optional()
+        .describe("Required with confirmed: true — the `action` from the preview the user confirmed ('finish-work' or 'resubmit')."),
+    },
+    { title: "Deliver Secure Deal work" },
+    async ({ dealId, deliveredOutside, confirmed, action }) => {
+      if (deliveredOutside !== true) {
+        throw new Error(
+          "Not sent: only delivery outside the platform (deliveredOutside: true) is supported in this MCP; uploading the work from the chat is not available. If the work was not handed over outside Mellow, send the user to https://my.mellow.io/ to deliver it there.",
+        );
+      }
+      const deal = mapCurrencyIdToCode(await loadDeal(client, dealId)) as DealRecord;
+      const { status, action: currentAction } = submitActionFor(deal, dealId);
+      const party = reminderRecipient(deal);
+      const clientRequest =
+        currentAction === "resubmit" && typeof deal.rejectMessage === "string" && deal.rejectMessage.trim().length > 0
+          ? deal.rejectMessage
+          : null;
+      const preview = {
+        dealId,
+        number: deal.number ?? null,
+        client: party.name,
+        amount: deal.amount ?? null,
+        currency: deal.currency ?? null,
+        status,
+        action: currentAction,
+        deliveredOutside: true,
+        ...(currentAction === "resubmit" ? { clientRequest } : {}),
+      };
+      if (confirmed !== true) {
+        const step =
+          currentAction === "resubmit"
+            ? `redeliver the work after the client's rework request (${clientRequest ? `the client asked: "${clientRequest}"` : "the client did not give a reason"})`
+            : "deliver the work and send it to the client for review";
+        return respond({
+          sent: false,
+          preview,
+          notes: [
+            `Nothing was sent. Ask the user: ${step} for deal ${deal.number ?? dealId} (${party.name ?? "the client"}, ${deal.amount ?? "?"} ${deal.currency ?? ""}) with the mark 'Work delivered outside the platform' — was the work handed over outside Mellow? After an explicit 'yes', call deal_finishWork again with deliveredOutside: true, confirmed: true and action: "${currentAction}".`,
+          ],
+        });
+      }
+      if (action !== currentAction) {
+        throw new Error(
+          `Not sent: the confirmed step (${action ?? "none"}) does not match the deal's current step (${currentAction}, status '${status}'). Show the user the current preview and ask again.`,
+        );
+      }
+      await client.post<unknown>(`${DEALS_PATH}/${dealId}/${currentAction}`, { deliveredOutside: true });
+      const refreshed = await refreshDeal(client, dealId);
+      return respond(
+        mapCurrencyIdToCode({
+          sent: true,
+          action: currentAction,
+          deal: refreshed ?? { id: dealId, number: deal.number ?? null },
+          notes: [
+            "Delivered: the client now reviews the work and either accepts it (Mellow then pays the freelancer) or asks for changes.",
+          ],
+        }),
+      );
+    },
+  );
+
+  server.tool(
     "deal_cancel",
     "Cancel a Secure Deal. Allowed only in statuses `new` and `sent`, i.e. before the client has paid; later statuses cannot be cancelled. ALWAYS confirm with the user first, restating deal number, client and amount; call only after an explicit 'yes'. Irreversible. Mellow does NOT email the client about the cancellation (tell the user, so they can inform the client), the client's deal link stops working, and any card payment the client had started is voided. Never cancel as a side effect: to correct terms use deal_update, to make a similar deal use deal_duplicate. Composite: GET deal (status check) → POST /{dealId}/cancel.",
     {
@@ -580,28 +690,6 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
   );
 
   server.tool(
-    "f2b_createIndividualClient",
-    "Create an F2B client who is a private person (individual), not a company: fullName, email, country, currency (EUR or USD, fixed forever). For a company use f2b_createClient; ask the user which it is if unclear. Limits: an individual client can be billed at most €1,000 (EUR equivalent) per calendar month, summed over all its non-cancelled invoices and Secure Deals created that month. Caveat: the backend accepts individual clients for both invoices and Secure Deals, but Mellow's current web cabinet only creates company clients, and the client-side Secure Deal page currently tells an individual client that verification for individuals isn't available yet and to contact the freelancer — warn the user that such a client may be unable to complete payment. Status starts `not_verified`. Use the returned client's `id` as clientId.",
-    {
-      fullName: z.string().min(1).describe("The person's full name, no HTML"),
-      email: z.string().email().describe("Email where the deal / invoice link is sent"),
-      country: z.string().length(2).describe("ISO-3166 alpha-2 country code, e.g. DE, US"),
-      currency: f2bCurrencyEnum.describe("EUR or USD. Fixed at creation — every deal / invoice to this client uses it."),
-    },
-    { title: "Create F2B individual client" },
-    async (params) => {
-      const body = {
-        fullName: params.fullName,
-        email: params.email,
-        country: params.country,
-        currencyId: currencyToId(params.currency),
-      };
-      const result = await client.post<unknown>("/freelancer/f2b/clients/individual", body);
-      return respond(mapCurrencyIdToCode(result));
-    },
-  );
-
-  server.tool(
     "f2b_searchClients",
     "Search the freelancer's clients for Secure Deals and invoices by name or email (`search` matches company name, person's full name, email, and company brand). The list also contains companies the freelancer already works with on Mellow that are not F2B clients yet. Each row: entryType ('client' | 'company'), id (F2B client id — use it as clientId; null on company rows), companyId, companyName, email, country, currency, status, clientType ('legal' | 'individual'), needsCreate. Rows with needsCreate=true are connected companies without an F2B client: call f2b_createClientFromCompany({companyId}) first and use the returned client's id. Archived and suspended clients are hidden unless you pass `status` explicitly; the status filter applies to client rows only (company rows always appear). Paginated: page, size.",
     {
@@ -631,7 +719,7 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "f2b_createClientFromCompany",
-    "Turn a connected company (an f2b_searchClients row with needsCreate=true) into an F2B client, or return the existing F2B client if one was already made for that company. A new client is `active` straight away (the company is already verified on Mellow) and takes the company's name, admin email, country and currency. Use the returned `id` as clientId for deal_create or f2b_createInvoiceDraft; if the returned client is archived it cannot be used. Errors: 403 if the company is not connected to the freelancer; 409 if the company's currency is not EUR/USD or it has no country — then create the client with f2b_createClient instead.",
+    "Technical step, not a way to create a new client: use it only when the user picked a connected company (an f2b_searchClients row with needsCreate=true) for an invoice or deal. Never offer it as an option when the user asks to create a client or what is needed for that — new clients are created only with f2b_createClient. Turns the connected company into an F2B client, or returns the existing F2B client if one was already made for that company. A new client is `active` straight away (the company is already verified on Mellow) and takes the company's name, admin email, country and currency. Use the returned `id` as clientId for deal_create or f2b_createInvoiceDraft; if the returned client is archived it cannot be used. Errors: 403 if the company is not connected to the freelancer; 409 if the company's currency is not EUR/USD or it has no country — then create the client with f2b_createClient instead.",
     {
       companyId: z.number().int().positive().describe("`companyId` from an f2b_searchClients row with needsCreate=true"),
     },

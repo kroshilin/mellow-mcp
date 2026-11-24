@@ -100,6 +100,7 @@ describe("registerSecureDealTools", () => {
         "deal_cancel",
         "deal_create",
         "deal_duplicate",
+        "deal_finishWork",
         "deal_get",
         "deal_list",
         "deal_remind",
@@ -107,7 +108,6 @@ describe("registerSecureDealTools", () => {
         "deal_summary",
         "deal_update",
         "f2b_createClientFromCompany",
-        "f2b_createIndividualClient",
         "f2b_searchClients",
       ].sort(),
     );
@@ -442,6 +442,120 @@ describe("deal_get / deal_list", () => {
   });
 });
 
+describe("deal_finishWork", () => {
+  const acme = { id: 42, email: "client@acme.test", companyName: "Acme Ltd" };
+
+  it("description ties deliveredOutside to the cabinet checkbox and demands two steps", () => {
+    const { description, schema } = setup({});
+    const text = description("deal_finishWork");
+    expect(text).toMatch(/Work delivered outside the platform/);
+    expect(text).toMatch(/Работа передана вне платформы/);
+    expect(text).toMatch(/WITHOUT `confirmed`/);
+    expect(text).toMatch(/explicit 'yes'/);
+    expect(description("deal_get")).not.toMatch(/not available in this MCP/);
+    expect(schema("deal_finishWork").safeParse({ dealId: 77 }).success).toBe(false);
+    expect(schema("deal_finishWork").safeParse({ dealId: 77, deliveredOutside: true, action: "approve" }).success).toBe(false);
+  });
+
+  it("in_work without confirmed: previews the first delivery and sends nothing", async () => {
+    const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status: "in_work", client: acme }) });
+    const result = await invoke("deal_finishWork", { dealId: 77, deliveredOutside: true });
+    expect(calls).toEqual([{ method: "GET", path: `${DEALS}/77` }]);
+    expect(result.structuredContent).toMatchObject({
+      sent: false,
+      preview: {
+        number: "SD-0077",
+        client: "Acme Ltd",
+        amount: 1000,
+        currency: "EUR",
+        status: "in_work",
+        action: "finish-work",
+        deliveredOutside: true,
+      },
+    });
+    expect(result.structuredContent.preview).not.toHaveProperty("clientRequest");
+    expect(JSON.stringify(result.structuredContent.notes)).toMatch(/action: \\"finish-work\\"/);
+  });
+
+  it("in_work confirmed → GET → POST /finish-work with {deliveredOutside: true} → GET", async () => {
+    const { invoke, calls } = setup({
+      [`GET ${DEALS}/77`]: dealDetail({ status: "in_work" }),
+      [`POST ${DEALS}/77/finish-work`]: [],
+    });
+    const result = await invoke("deal_finishWork", { dealId: 77, deliveredOutside: true, confirmed: true, action: "finish-work" });
+    expect(calls).toEqual([
+      { method: "GET", path: `${DEALS}/77` },
+      { method: "POST", path: `${DEALS}/77/finish-work`, body: { deliveredOutside: true } },
+      { method: "GET", path: `${DEALS}/77` },
+    ]);
+    expect(result.structuredContent).toMatchObject({ sent: true, action: "finish-work" });
+  });
+
+  it("revision_requested without confirmed: previews the resubmit with the client's request", async () => {
+    const { invoke, calls } = setup({
+      [`GET ${DEALS}/77`]: dealDetail({ status: "revision_requested", client: acme, rejectMessage: "Make the logo blue" }),
+    });
+    const result = await invoke("deal_finishWork", { dealId: 77, deliveredOutside: true });
+    expect(calls).toHaveLength(1);
+    expect(result.structuredContent).toMatchObject({
+      sent: false,
+      preview: { action: "resubmit", status: "revision_requested", clientRequest: "Make the logo blue" },
+    });
+    expect(JSON.stringify(result.structuredContent.notes)).toMatch(/the client asked: \\"Make the logo blue\\"/);
+  });
+
+  it("revision_requested with no client comment says the client gave no reason", async () => {
+    const { invoke } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status: "revision_requested", rejectMessage: null }) });
+    const result = await invoke("deal_finishWork", { dealId: 77, deliveredOutside: true });
+    expect(result.structuredContent.preview).toMatchObject({ clientRequest: null });
+    expect(JSON.stringify(result.structuredContent.notes)).toMatch(/the client did not give a reason/);
+  });
+
+  it("revision_requested confirmed → POST /resubmit with {deliveredOutside: true}", async () => {
+    const { invoke, calls } = setup({
+      [`GET ${DEALS}/77`]: dealDetail({ status: "revision_requested" }),
+      [`POST ${DEALS}/77/resubmit`]: [],
+    });
+    const result = await invoke("deal_finishWork", { dealId: 77, deliveredOutside: true, confirmed: true, action: "resubmit" });
+    expect(calls).toContainEqual({ method: "POST", path: `${DEALS}/77/resubmit`, body: { deliveredOutside: true } });
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(result.structuredContent).toMatchObject({ sent: true, action: "resubmit" });
+  });
+
+  it("confirmed with a step that no longer matches the deal status is refused without sending", async () => {
+    const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status: "revision_requested" }) });
+    await expect(invoke("deal_finishWork", { dealId: 77, deliveredOutside: true, confirmed: true, action: "finish-work" })).rejects.toThrow(
+      /does not match the deal's current step \(resubmit/,
+    );
+    await expect(invoke("deal_finishWork", { dealId: 77, deliveredOutside: true, confirmed: true })).rejects.toThrow(/does not match/);
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it.each([
+    ["new", /still a draft/],
+    ["sent", /not prepaid yet/],
+    ["client_review", /already delivered/],
+    ["finished", /already finished/],
+    ["cancelled", /cancelled/],
+    ["waiting_deadline_decision", /deadline has passed/],
+  ])("refuses status %s with an explanation and never POSTs, even when confirmed", async (status, reason) => {
+    const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status }) });
+    await expect(invoke("deal_finishWork", { dealId: 77, deliveredOutside: true })).rejects.toThrow(reason);
+    await expect(invoke("deal_finishWork", { dealId: 77, deliveredOutside: true, confirmed: true, action: "finish-work" })).rejects.toThrow(
+      new RegExp(`status is '${status}'`),
+    );
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it("deliveredOutside: false is refused before any backend call", async () => {
+    const { invoke, calls } = setup({ [`GET ${DEALS}/77`]: dealDetail({ status: "in_work" }) });
+    await expect(
+      invoke("deal_finishWork", { dealId: 77, deliveredOutside: false, confirmed: true, action: "finish-work" }),
+    ).rejects.toThrow(/only delivery outside the platform/);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("deal_remind / deal_cancel", () => {
   it("deal_remind without confirmed: previews the recipient and sends nothing", async () => {
     const { invoke, calls } = setup({
@@ -544,24 +658,10 @@ describe("deal_summary (composite)", () => {
 });
 
 describe("client tools", () => {
-  it("f2b_createIndividualClient POSTs fullName/email/country/currencyId", async () => {
-    const { invoke, calls } = setup({
-      "POST /freelancer/f2b/clients/individual": { id: 9, type: "individual", currency: { currency: "EUR", id: 3 } },
-    });
-    const result = await invoke("f2b_createIndividualClient", {
-      fullName: "Jane Doe",
-      email: "jane@example.test",
-      country: "DE",
-      currency: "EUR",
-    });
-    expect(calls).toEqual([
-      {
-        method: "POST",
-        path: "/freelancer/f2b/clients/individual",
-        body: { fullName: "Jane Doe", email: "jane@example.test", country: "DE", currencyId: 3 },
-      },
-    ]);
-    expect(result.structuredContent.currency).toBe("EUR");
+  it("deal_create offers no individual (private person) clients and no individual limits", () => {
+    const { description } = setup({});
+    expect(description("deal_create")).not.toMatch(/individual|1,000/i);
+    expect(description("deal_create")).not.toMatch(/f2b_createIndividualClient|f2b_createClientFromCompany/);
   });
 
   it("f2b_searchClients queries the unified list and maps currencyId", async () => {

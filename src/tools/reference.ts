@@ -6,7 +6,7 @@ import { asStructuredList, type MellowClient } from "../mellow-client";
 export function registerExchangeRateTool(server: McpServer, client: MellowClient) {
   server.tool(
     "getExchangeRate",
-    "Get Mellow's current currency exchange rates — the same rates the Mellow cabinet shows. Returns an array of {base, target, rate} triples. Quote rates from this tool; never use rates from memory or the web when the user asks about Mellow's rates.",
+    "Get Mellow's current currency exchange rates — the same rates the Mellow cabinet shows. Returns an array of {base, target, rate} triples. Quote rates from this tool; never use rates from memory or the web when the user asks about Mellow's rates. Show the rates exactly as returned (base → target: rate) and nothing else: no comments, interpretations, sanity checks, remarks about rate direction or plausibility, spreads or how the rates are calculated.",
     {},
     { title: "Get exchange rates", readOnlyHint: true },
     async () => {

@@ -13,7 +13,8 @@ import {
 export const F2B_FIELD_DOCS = {
   serviceId:
     "Service id from the Mellow service catalog. Find it with f2b_searchServices (search by the service name the user describes), or reuse the service of one of the user's previous invoices (f2b_listInvoices → service.id). Never tell the user to look up the id in the cabinet — the cabinet UI does not show ids.",
-  serviceName: "Invoice title shown to the client (what the work is), no HTML, 1–1024 chars",
+  serviceName:
+    "The service's title exactly as returned by f2b_searchServices (or service.title of the reused previous invoice) for that serviceId. Fill it in yourself — never ask the user for an invoice title or name.",
   serviceStartDate: "ISO date YYYY-MM-DD — first day of the work period (when the work was/will be done)",
   serviceEndDate:
     "ISO date YYYY-MM-DD — last day of the work period, i.e. the period during which the work was or will be performed. Printed as 'Period from … to …' on the invoice. It is NOT a payment due date.",
@@ -27,7 +28,7 @@ export const F2B_FIELD_DOCS = {
 export function registerF2bInvoiceTools(server: McpServer, client: MellowClient) {
   server.tool(
     "f2b_createInvoiceDraft",
-    "Create an F2B invoice in draft status (`new`). Email is NOT sent to the client at this step — this is the preview half of the mandatory two-step send. Currency is derived from the target client. Before calling, collect from the user: client, invoice title (serviceName), service (serviceId — see its field doc), work period, line items, who pays the commission, and whether card payment is allowed. Composite under the hood: GET client → POST /v2/invoices. After creating, call f2b_calculateInvoiceCost({invoiceId}) and show the user the exact 'You receive' (received) and client total (cost) before f2b_sendInvoiceDraft. Backend limits: ≤ 10 line items, total amount ≤ 10 000 in client currency, invoiceDate must be ≤ today. Public payment URL does NOT exist until f2b_sendInvoiceDraft is called.",
+    "Create an F2B invoice in draft status (`new`). Email is NOT sent to the client at this step — this is the preview half of the mandatory two-step send. Currency is derived from the target client. Before calling, collect from the user: client, service (serviceId — see its field doc; serviceName is the found service's title, do NOT ask for an invoice title), work period, line items, who pays the commission, and whether card payment is allowed. Composite under the hood: GET client → POST /v2/invoices. After creating, call f2b_calculateInvoiceCost({invoiceId}) and show the user the exact 'You receive' (received) and client total (cost) before f2b_sendInvoiceDraft. Backend limits: ≤ 10 line items, total amount ≤ 10 000 in client currency, invoiceDate must be ≤ today. Public payment URL does NOT exist until f2b_sendInvoiceDraft is called.",
     {
       clientId: z.number().int().describe("Numeric client id (currency derives from this client)"),
       serviceId: z.number().int().describe(F2B_FIELD_DOCS.serviceId),
