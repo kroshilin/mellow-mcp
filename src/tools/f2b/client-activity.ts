@@ -28,7 +28,6 @@ const ACTIVE_DEAL_STATUSES = [
   "revision_requested",
   "waiting_deadline_decision",
   "declined_by_customer",
-  "dispute_in_progress",
 ];
 
 const PAGE_SIZE = 500;

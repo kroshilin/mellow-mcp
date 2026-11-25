@@ -196,7 +196,6 @@ describe("f2b_archiveClient — active invoice/deal guard", () => {
       "revision_requested",
       "waiting_deadline_decision",
       "declined_by_customer",
-      "dispute_in_progress",
     ]);
 
     expect(calls[calls.length - 1]).toEqual({ method: "DELETE", path: "/freelancer/f2b/clients", body: { clientId: 42 } });
