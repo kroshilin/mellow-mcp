@@ -578,6 +578,10 @@ claude.ai tool results carry only text and images, so files are relayed as short
 
 A Secure Deal is the same backend entity as an F2B invoice (`f2b_invoices`, `work_completed = false`) and shares the client list. Flow: freelancer creates a draft (`deal_create`) → sends (`deal_send`) → client prepays, money is held (`in_work`) → freelancer delivers (`deal_finishWork`, `client_review`; after a rework request `revision_requested` → redelivers the same way) → client accepts (`for_payment`) → automatic payout (`finished`). Gated per user by the `secureDeals` feature flag — 404 means it is off.
 
+- **Client getting money back:** after prepayment the client can refuse to pay ONLY if the work deadline set by the freelancer was missed (status `declined_by_customer`).
+- **Review period and payout:** after the freelancer delivers the work, the client has 14 days to review it. Accepting = confirming the payment, the money is released from the hold. If the client does not accept the work within 14 days, the deal is accepted automatically: the money is released from the hold and the deal becomes paid (`finished`). The money appears on the freelancer's balance as soon as the client clicks "Accept" in the deal.
+- **Rework:** the client can send the deal for rework an unlimited number of times.
+
 | Intent | Tool | Notes |
 |---|---|---|
 | Create / send | `deal_create` → `deal_send` | Show `possiblePayments[].received` / `.cost` and confirm before sending |

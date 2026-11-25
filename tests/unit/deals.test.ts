@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { registerSecureDealTools } from "../../src/tools/f2b/deals";
+import { AGENT_PRIMER } from "../../src/agent-primer";
+import { readFileSync } from "node:fs";
 
 // Contract tests for the Secure Deal tools: stub McpServer to capture handlers
 // (+ description and Zod shape), stub MellowClient to record method/path/body
@@ -176,12 +178,12 @@ describe("deal_create (composite)", () => {
     expect(result.structuredContent.notes).toEqual(expect.arrayContaining([expect.stringMatching(/deal_send/)]));
   });
 
-  it("forwards promoCode and acquiringEnabled only when given", async () => {
+  it("forwards acquiringEnabled when given and never sends a promo code", async () => {
     const { invoke, calls } = setup(responses);
-    await invoke("deal_create", { ...input, promoCode: "SPRING", acquiringEnabled: true });
+    await invoke("deal_create", { ...input, acquiringEnabled: true });
     const body = calls[1].body as Record<string, unknown>;
-    expect(body.promoCode).toBe("SPRING");
     expect(body.acquiringEnabled).toBe(true);
+    expect(body).not.toHaveProperty("promoCode");
   });
 
   it("rejects a deadline that is not after today before any HTTP call", async () => {
@@ -689,5 +691,39 @@ describe("client tools", () => {
     const { invoke, calls } = setup({ "POST /freelancer/f2b/clients/from-company": { id: 11, status: "active" } });
     await invoke("f2b_createClientFromCompany", { companyId: 5 });
     expect(calls).toEqual([{ method: "POST", path: "/freelancer/f2b/clients/from-company", body: { companyId: 5 } }]);
+  });
+});
+
+describe("deal knowledge (testing feedback, row 15)", () => {
+  // vitest runs from the repo root
+  const DOMAIN = readFileSync("docs/DOMAIN.md", "utf8");
+  const section = DOMAIN.slice(DOMAIN.indexOf("### 10.8 Secure Deal"));
+
+  it("no deal tool mentions a promo code; deal_create has no promoCode field", () => {
+    const { names, description, schema } = setup({});
+    for (const tool of names()) expect(description(tool)).not.toMatch(/promo/i);
+    expect(Object.keys(schema("deal_create").shape)).not.toContain("promoCode");
+  });
+
+  it("dispute_in_progress is not a deal status anywhere", () => {
+    const { names, description, schema } = setup({});
+    for (const tool of names()) expect(description(tool)).not.toMatch(/dispute/i);
+    expect(schema("deal_list").safeParse({ status: ["dispute_in_progress"] }).success).toBe(false);
+    expect(section).not.toMatch(/dispute/i);
+    const primerDeal = AGENT_PRIMER.slice(AGENT_PRIMER.indexOf("**Secure Deal lifecycle:**"));
+    expect(primerDeal).not.toMatch(/dispute|promo/i);
+  });
+
+  it.each([
+    ["agent primer", () => AGENT_PRIMER],
+    ["DOMAIN.md §10.8", () => section],
+    ["deal_get description", () => setup({}).description("deal_get")],
+  ])("%s: refund only after a missed freelancer deadline, 14-day review, auto-accept, instant balance, unlimited rework", (_label, text) => {
+    const t = text();
+    expect(t).toMatch(/refuse to pay ONLY if the work deadline set by the freelancer was missed \(status .?declined_by_customer/i);
+    expect(t).toMatch(/14 days to review/);
+    expect(t).toMatch(/accepted automatically: the money is released from the hold and the deal becomes paid \(.?finished/);
+    expect(t).toMatch(/freelancer's balance as soon as the client clicks "?Accept/);
+    expect(t).toMatch(/rework an unlimited number of times/);
   });
 });

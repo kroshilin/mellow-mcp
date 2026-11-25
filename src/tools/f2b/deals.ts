@@ -38,7 +38,6 @@ const DEAL_STATUS = [
   "revision_requested",
   "waiting_deadline_decision",
   "declined_by_customer",
-  "dispute_in_progress",
   "cancelled",
 ] as const;
 const dealStatusEnum = z.enum(DEAL_STATUS);
@@ -66,8 +65,7 @@ const SUBMIT_REFUSAL_BY_STATUS: Record<string, string> = {
   for_payment: "the client already accepted the work; the payout is in progress",
   finished: "the deal is already finished",
   waiting_deadline_decision: "the deadline has passed; the client must extend it or decline the deal first",
-  declined_by_customer: "the client declined the deal and the money was refunded",
-  dispute_in_progress: "a dispute is in progress",
+  declined_by_customer: "the work deadline set by the freelancer was missed, the client declined the deal and the money was refunded",
   cancelled: "the deal is cancelled",
 };
 
@@ -361,13 +359,6 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
       lineItems: z.array(f2bLineItemSchema).min(1).max(10).describe(FIELD_DOCS.lineItems),
       commissionPayer: f2bCommissionPayerEnum.describe(FIELD_DOCS.commissionPayer),
       acquiringEnabled: z.boolean().optional().describe(`${FIELD_DOCS.acquiringEnabled}. Default false (bank transfer only).`),
-      promoCode: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Optional promo code from the user. A valid, current code lowers Mellow's fee; an unknown code is ignored (standard fee).",
-        ),
     },
     { title: "Create Secure Deal draft" },
     async (params) => {
@@ -382,7 +373,6 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
         serviceDeadline: params.serviceDeadline,
         lineItems: params.lineItems,
         acquiringEnabled: params.acquiringEnabled ?? false,
-        ...(params.promoCode !== undefined ? { promoCode: params.promoCode } : {}),
       };
       const created = await client.post<DealRecord>(DEALS_PATH, body);
       const dealId = typeof created?.id === "number" ? created.id : undefined;
@@ -417,7 +407,7 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "deal_update",
-    "Edit a Secure Deal in place (same deal and number; no new deal is created). Pass only the fields to change — the tool loads the deal and sends the full payload the backend requires (composite: GET deal → PUT /{dealId} → GET deal). Allowed only in statuses `new`, `sent` and `rejected`, and not once the client's card payment is authorized. Effects: `new` — silent draft edit; `sent` — the client is emailed that the terms changed (at most one email per 30 minutes) and a payment page opened on the old terms can no longer be paid; `rejected` — the deal returns to `new` (a draft the client can't see) and must be resent with deal_send (read the client's reason in deal_get `rejectMessage` first). If the deal is `sent`, confirm with the user first, restating deal number, client and amount, because the client gets an email. The client and currency cannot be changed (create a new deal instead) and the promo code is fixed at creation. lineItems, when passed, replace ALL existing items. The backend re-validates the deadline on every edit, so a deal whose deadline is not after today needs a new serviceDeadline. Show the user the new possiblePayments figures afterwards.",
+    "Edit a Secure Deal in place (same deal and number; no new deal is created). Pass only the fields to change — the tool loads the deal and sends the full payload the backend requires (composite: GET deal → PUT /{dealId} → GET deal). Allowed only in statuses `new`, `sent` and `rejected`, and not once the client's card payment is authorized. Effects: `new` — silent draft edit; `sent` — the client is emailed that the terms changed (at most one email per 30 minutes) and a payment page opened on the old terms can no longer be paid; `rejected` — the deal returns to `new` (a draft the client can't see) and must be resent with deal_send (read the client's reason in deal_get `rejectMessage` first). If the deal is `sent`, confirm with the user first, restating deal number, client and amount, because the client gets an email. The client and currency cannot be changed (create a new deal instead). lineItems, when passed, replace ALL existing items. The backend re-validates the deadline on every edit, so a deal whose deadline is not after today needs a new serviceDeadline. Show the user the new possiblePayments figures afterwards.",
     {
       dealId: z.number().int().describe(FIELD_DOCS.dealId),
       lineItems: z.array(f2bLineItemSchema).min(1).max(10).optional().describe(`${FIELD_DOCS.lineItems}. Replaces the whole list.`),
@@ -445,7 +435,7 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "deal_duplicate",
-    "Copy a Secure Deal into a NEW draft (status `new`, new deal number), like the cabinet's Duplicate; the original is untouched. Works from any status, including finished and cancelled. Copied from the original: client, service, currency, who pays the fee, line items. NOT copied (same as the cabinet): the deadline — always ask the user for a new serviceDeadline, never reuse the old one; the card-payment flag — ask whether card payment should be allowed (default: bank transfer only); also the promo code, delivered work and client messages. Before calling, offer to change any copied field (client, items, amounts, service, fee payer) and pass the changes; a different client must have the same currency or the copy takes that client's currency. Composite: GET original → GET client → POST /v2/freelancer/secure-deals → GET the new deal. Show the copy's possiblePayments (received / cost) and get an explicit 'yes' before deal_send.",
+    "Copy a Secure Deal into a NEW draft (status `new`, new deal number), like the cabinet's Duplicate; the original is untouched. Works from any status, including finished and cancelled. Copied from the original: client, service, currency, who pays the fee, line items. NOT copied (same as the cabinet): the deadline — always ask the user for a new serviceDeadline, never reuse the old one; the card-payment flag — ask whether card payment should be allowed (default: bank transfer only); also delivered work and client messages. Before calling, offer to change any copied field (client, items, amounts, service, fee payer) and pass the changes; a different client must have the same currency or the copy takes that client's currency. Composite: GET original → GET client → POST /v2/freelancer/secure-deals → GET the new deal. Show the copy's possiblePayments (received / cost) and get an explicit 'yes' before deal_send.",
     {
       dealId: z.number().int().describe(`${FIELD_DOCS.dealId} of the deal to copy`),
       serviceDeadline: isoDateSchema.describe(`New ${FIELD_DOCS.serviceDeadline}. Required: the old deadline is never copied.`),
@@ -491,7 +481,7 @@ export function registerSecureDealTools(server: McpServer, client: MellowClient)
 
   server.tool(
     "deal_get",
-    "Get one Secure Deal with full details. Key fields: `status` (lifecycle below); `possiblePayments[]` — the backend's breakdown per payment method (`type`: bank or acquiring = card): `received` = what the freelancer gets, `cost` = what the client pays in total, plus commission, vat, salesTax, acquiringCommission, freelancerCommission — quote these and NEVER compute fees yourself; `rejectMessage` — the client's latest written reason: the rework request when status is `revision_requested`, the rejection reason when `rejected` (null if the client gave none); `resultSubmissions[]` — work delivered so far; `serviceDeadline`, `reviewDeadlineAt`; `availableActions` — what the freelancer can do now. Lifecycle: new → sent → (client prepays, Mellow holds the money) in_work → client_review → for_payment → finished. Side branches: rejected (deal_update returns it to new), revision_requested (client asked for changes), waiting_deadline_decision (deadline passed during in_work; the client extends or declines), declined_by_customer (money refunded to the client), cancelled. The payment invoice PDF: deal_downloadInvoicePdf. Delivering the work (in_work) or redelivering after a rework request (revision_requested): deal_finishWork.",
+    "Get one Secure Deal with full details. Key fields: `status` (lifecycle below); `possiblePayments[]` — the backend's breakdown per payment method (`type`: bank or acquiring = card): `received` = what the freelancer gets, `cost` = what the client pays in total, plus commission, vat, salesTax, acquiringCommission, freelancerCommission — quote these and NEVER compute fees yourself; `rejectMessage` — the client's latest written reason: the rework request when status is `revision_requested`, the rejection reason when `rejected` (null if the client gave none); `resultSubmissions[]` — work delivered so far; `serviceDeadline`, `reviewDeadlineAt`; `availableActions` — what the freelancer can do now. Lifecycle: new → sent → (client prepays, Mellow holds the money) in_work → client_review → for_payment → finished. Side branches: rejected (deal_update returns it to new), revision_requested (client asked for changes; the client can send the deal for rework an unlimited number of times), waiting_deadline_decision (deadline passed during in_work; the client extends or declines), declined_by_customer (money refunded to the client), cancelled. After prepayment the client can refuse to pay ONLY if the work deadline set by the freelancer was missed (status declined_by_customer). After the freelancer delivers the work, the client has 14 days to review it; if the client does not accept it within that time, the deal is accepted automatically: the money is released from the hold and the deal becomes paid (finished). The money appears on the freelancer's balance as soon as the client clicks Accept in the deal. The payment invoice PDF: deal_downloadInvoicePdf. Delivering the work (in_work) or redelivering after a rework request (revision_requested): deal_finishWork.",
     {
       dealId: z.number().int().describe(FIELD_DOCS.dealId),
     },
